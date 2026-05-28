@@ -45,8 +45,12 @@
     },
     "plugins": [
       "expo-dev-client",
-      "expo-barcode-scanner",
-      "expo-camera",
+      [
+        "expo-camera",
+        {
+          "cameraPermission": "This app uses the camera to scan QR codes for ticket validation."
+        }
+      ],
       "expo-location"
     ],
     "extra": {
