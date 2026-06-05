@@ -1,412 +1,221 @@
-import React, { useState, useEffect } from 'react';
-import { StyleSheet, View, ScrollView, TouchableOpacity, Image, Platform, TextInput, Dimensions, Animated, Alert } from 'react-native';
-import { Text, Icon, useTheme, Button } from '@rneui/themed';
-import { SafeAreaView } from 'react-native-safe-area-context';
-import { LinearGradient } from 'expo-linear-gradient';
-import * as ImagePicker from 'expo-image-picker';
+import React, { useState, useEffect, useRef } from 'react';
+import {
+  StyleSheet, View, ScrollView, TouchableOpacity,
+  Platform, TextInput, Text, Image, Alert,
+} from 'react-native';
+import { Icon } from '@rneui/themed';
+import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useAuth } from '../context/AuthContext';
 import { useEvents } from '../context/EventsContext';
+import { pickImageFromLibrary } from '../utils/pickImage';
 
-const { width } = Dimensions.get('window');
-
-const EditOrganizationScreen = ({ route, navigation }) => {
-  const { theme } = useTheme();
+export default function EditOrganizationScreen({ navigation }) {
+  const insets = useSafeAreaInsets();
   const { user, updateUser } = useAuth();
   const { updateEventsWithOrganizationNames } = useEvents();
-  
-  const [name, setName] = useState('');
-  const [title, setTitle] = useState('');
-  const [image, setImage] = useState('');
-  const [isLoading, setIsLoading] = useState(false);
+
+  const [orgName, setOrgName]           = useState('');
+  const [description, setDescription]   = useState('');
+  const [initialized, setInitialized]   = useState(false);
+
+  const latest = useRef({ orgName, description });
+  useEffect(() => { latest.current = { orgName, description }; }, [orgName, description]);
 
   useEffect(() => {
-    // Load data from user's provider info
-    if (user?.providerInfo) {
-      setName(user.providerInfo.organizationName || '');
-      setTitle(user.providerInfo.description || '');
-      setImage(user.providerInfo.partyLogo || user.profilePicture || '');
+    if (user && !initialized) {
+      setOrgName(user.providerInfo?.organizationName || '');
+      setDescription(user.providerInfo?.description || '');
+      setInitialized(true);
     }
-  }, [user]);
-  
-  const pickImage = async () => {
-    let result = await ImagePicker.launchImageLibraryAsync({
-      mediaTypes: ImagePicker.MediaTypeOptions.Images,
-      allowsEditing: true,
-      aspect: [1, 1],
-      quality: 0.8,
+  }, [user, initialized]);
+
+  // Auto-save on navigate away
+  useEffect(() => {
+    const unsub = navigation.addListener('beforeRemove', async () => {
+      const { orgName: n, description: d } = latest.current;
+      try {
+        const result = await updateUser({
+          providerInfo: {
+            ...(user?.providerInfo || {}),
+            organizationName: n,
+            description: d,
+          },
+        });
+        if (result?.success) {
+          await updateEventsWithOrganizationNames({ organizationName: n, description: d }, user?.id);
+        }
+      } catch { /* silent */ }
     });
+    return unsub;
+  }, [navigation, user]);
 
-    if (!result.canceled) {
-      setImage(result.assets[0].uri);
-    }
+  const pickLogo = async () => {
+    const uri = await pickImageFromLibrary();
+    if (!uri) return;
+    const result = await updateUser({
+      providerInfo: { ...(user?.providerInfo || {}), partyLogo: uri },
+    });
+    if (!result?.success) Alert.alert('Error', 'Failed to update logo.');
   };
-  
-  const handleSave = async () => {
-    if (!name.trim()) {
-      Alert.alert('Error', 'Organization name is required');
-      return;
-    }
 
-    if (!title.trim()) {
-      Alert.alert('Error', 'Organization description is required');
-      return;
-    }
-
-    setIsLoading(true);
-    
-    try {
-      // Update user's provider info
-      const updatedProviderInfo = {
-        ...user.providerInfo,
-        organizationName: name.trim(),
-        description: title.trim(),
-        partyLogo: image
-      };
-
-      const updatedUser = {
-        ...user,
-        profilePicture: image, // Ensure it's saved to main profile
-        providerInfo: updatedProviderInfo
-      };
-
-      console.log('Updating user with:', {
-        profilePicture: image,
-        organizationName: updatedProviderInfo.organizationName,
-        description: updatedProviderInfo.description,
-        partyLogo: updatedProviderInfo.partyLogo
-      });
-
-      // Update the user context
-      const result = await updateUser(updatedUser);
-      
-      if (result.success) {
-        console.log('Organization profile updated successfully');
-        
-        // Update existing events with the new organization name
-        await updateEventsWithOrganizationNames(updatedProviderInfo, user.id);
-        
-        Alert.alert(
-          'Success', 
-          'Organization profile updated successfully!',
-          [
-            {
-              text: 'OK',
-              onPress: () => navigation.goBack()
-            }
-          ]
-        );
-      } else {
-        console.error('Failed to update user:', result.message);
-        Alert.alert('Error', result.message || 'Failed to update organization profile.');
-      }
-      
-    } catch (error) {
-      console.error('Error updating organization profile:', error);
-      Alert.alert('Error', 'Failed to update organization profile. Please try again.');
-    } finally {
-      setIsLoading(false);
-    }
-  };
+  const logoUri = user?.providerInfo?.partyLogo;
+  const initials = orgName
+    ? orgName.split(' ').map(w => w[0]).join('').toUpperCase().slice(0, 2)
+    : 'O';
 
   return (
-    <View style={styles.container}>
-      {/* Decorative Top Gradient */}
-      <LinearGradient
-        colors={['#E0E0E0', '#A0A0A0']}
-        start={{ x: 0, y: 0 }}
-        end={{ x: 1, y: 0 }}
-        style={styles.topGradient}
-      />
-      
-      <SafeAreaView style={{ flex: 1, backgroundColor: theme.colors.background }}>
-        <View style={styles.header}>
-          <TouchableOpacity 
-            style={styles.closeButton}
-            onPress={() => navigation.goBack()}
-          >
-            <Icon name="x" type="feather" color="#fff" size={24} />
-          </TouchableOpacity>
-          <Text style={styles.headerTitle}>Edit Organization</Text>
-          <TouchableOpacity 
-            style={[styles.saveButton, isLoading && styles.saveButtonDisabled]}
-            onPress={handleSave}
-            disabled={isLoading}
-          >
-            <LinearGradient
-              colors={isLoading ? ['rgba(224, 224, 224, 0.5)', 'rgba(160, 160, 160, 0.5)'] : ['#E0E0E0', '#A0A0A0']}
-              start={{ x: 0, y: 0 }}
-              end={{ x: 1, y: 0 }}
-              style={styles.saveButtonGradient}
-            >
-              <Text style={styles.saveText}>{isLoading ? 'Saving...' : 'Save'}</Text>
-            </LinearGradient>
-          </TouchableOpacity>
+    <SafeAreaView style={styles.container} edges={['left', 'right']}>
+      {/* Top bar */}
+      <View style={[styles.topBar, { paddingTop: insets.top + 10 }]}>
+        <TouchableOpacity style={styles.backBtn} onPress={() => navigation.goBack()} activeOpacity={0.7}>
+          <Icon name="arrow-left" type="feather" size={20} color="#FFFFFF" />
+        </TouchableOpacity>
+        <Text style={styles.screenTitle}>Edit Organization</Text>
+        <View style={{ width: 40 }} />
+      </View>
+
+      <ScrollView
+        contentContainerStyle={[styles.scroll, { paddingBottom: insets.bottom + 40 }]}
+        showsVerticalScrollIndicator={false}
+        keyboardShouldPersistTaps="handled"
+      >
+        {/* Logo */}
+        <TouchableOpacity style={styles.pfpBox} onPress={pickLogo} activeOpacity={0.8}>
+          {logoUri ? (
+            <Image source={{ uri: logoUri }} style={styles.pfpImage} />
+          ) : (
+            <View style={styles.pfpPlaceholder}>
+              <Text style={styles.pfpInitials}>{initials}</Text>
+            </View>
+          )}
+          <View style={styles.pfpBadge}>
+            <Icon name="camera" type="feather" size={14} color="#FFFFFF" />
+          </View>
+        </TouchableOpacity>
+
+        {/* Org Name */}
+        <View style={styles.card}>
+          <View style={styles.fieldRow}>
+            <Text style={styles.fieldLabel}>Organization Name</Text>
+            <TextInput
+              style={styles.fieldInput}
+              value={orgName}
+              onChangeText={setOrgName}
+              placeholder="Your organization name"
+              placeholderTextColor="rgba(255,255,255,0.25)"
+              selectionColor="#FF4B8C"
+              returnKeyType="next"
+            />
+          </View>
         </View>
-        
-        <ScrollView 
-          style={styles.scrollView}
-          contentContainerStyle={styles.contentContainer}
-          showsVerticalScrollIndicator={false}
-        >
-          <View style={styles.imageSection}>
-            <TouchableOpacity 
-              style={styles.imageOuterContainer}
-              onPress={pickImage}
-              activeOpacity={0.8}
-            >
-              <LinearGradient
-                colors={['rgba(224, 224, 224, 0.2)', 'rgba(160, 160, 160, 0.2)']}
-                style={styles.imageGradientBorder}
-              >
-                <View style={styles.imageContainer}>
-                  {image ? (
-                    <Image
-                      source={{ uri: image }}
-                      style={styles.profileImage}
-                    />
-                  ) : (
-                    <View style={[styles.profileImage, styles.placeholderImage]}>
-                      <Text style={styles.placeholderText}>
-                        {(name || user?.name || 'O').charAt(0).toUpperCase()}
-                      </Text>
-                    </View>
-                  )}
-                </View>
-              </LinearGradient>
-            </TouchableOpacity>
+
+        {/* Description */}
+        <View style={styles.card}>
+          <View style={styles.fieldRow}>
+            <Text style={styles.fieldLabel}>Description</Text>
+            <TextInput
+              style={[styles.fieldInput, styles.textArea]}
+              value={description}
+              onChangeText={setDescription}
+              placeholder="Tell people about your organization…"
+              placeholderTextColor="rgba(255,255,255,0.25)"
+              selectionColor="#FF4B8C"
+              multiline
+              maxLength={500}
+            />
+            <Text style={styles.charCount}>{description.length}/500</Text>
           </View>
-          
-          <View style={styles.formSection}>
-            <View style={styles.inputGroup}>
-              <Text style={styles.inputLabel}>Organization Name</Text>
-              <View style={styles.inputContainer}>
-                <Icon
-                  name="briefcase"
-                  type="feather"
-                  size={18}
-                  color="rgba(255,255,255,0.5)"
-                  style={styles.inputIcon}
-                />
-                <TextInput
-                  style={styles.input}
-                  value={name}
-                  onChangeText={setName}
-                  placeholderTextColor="rgba(255,255,255,0.5)"
-                  selectionColor="#E0E0E0"
-                />
-              </View>
-            </View>
-            
-            <View style={styles.inputGroup}>
-              <Text style={styles.inputLabel}>Organization Description</Text>
-              <View style={styles.inputContainer}>
-                <Icon
-                  name="award"
-                  type="feather"
-                  size={18}
-                  color="rgba(255,255,255,0.5)"
-                  style={styles.inputIcon}
-                />
-                <TextInput
-                  style={styles.input}
-                  value={title}
-                  onChangeText={setTitle}
-                  placeholder="Describe your organization..."
-                  placeholderTextColor="rgba(255,255,255,0.5)"
-                  selectionColor="#E0E0E0"
-                  multiline
-                  numberOfLines={2}
-                />
-              </View>
-            </View>
-            
-            <View style={styles.tipContainer}>
-              <Icon
-                name="info"
-                type="feather"
-                size={16}
-                color="rgba(255,255,255,0.7)"
-                style={styles.tipIcon}
-              />
-              <Text style={styles.tipText}>
-                Your organization name and description will be visible to all event attendees
-              </Text>
-            </View>
-          </View>
-        </ScrollView>
-      </SafeAreaView>
-    </View>
+        </View>
+
+        <Text style={styles.autoSaveHint}>Changes save automatically when you go back</Text>
+      </ScrollView>
+    </SafeAreaView>
   );
-};
+}
 
 const styles = StyleSheet.create({
-  container: {
-    flex: 1,
-    backgroundColor: '#121212',
-  },
-  topGradient: {
-    position: 'absolute',
-    top: 0,
-    left: 0,
-    right: 0,
-    height: 3,
-    zIndex: 10,
-  },
-  header: {
+  container: { flex: 1, backgroundColor: '#0d0d0d' },
+
+  topBar: {
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
-    paddingHorizontal: 16,
-    paddingVertical: 12,
-    borderBottomWidth: 1,
-    borderBottomColor: 'rgba(255,255,255,0.1)',
+    paddingHorizontal: 18,
+    paddingBottom: 10,
   },
-  headerTitle: {
-    color: '#fff',
-    fontSize: 18,
-    fontWeight: '600',
+  backBtn: {
+    width: 40, height: 40, borderRadius: 12,
+    backgroundColor: 'rgba(255,255,255,0.08)',
+    alignItems: 'center', justifyContent: 'center',
   },
-  closeButton: {
-    padding: 8,
+  screenTitle: {
+    fontSize: 18, fontWeight: '700', color: '#FFFFFF', letterSpacing: 0.3,
   },
-  saveButton: {
-    borderRadius: 20,
-    overflow: 'hidden',
+
+  scroll: {
+    paddingHorizontal: 20,
+    paddingTop: 12,
+    flexGrow: 1,
+    justifyContent: 'center',
   },
-  saveButtonDisabled: {
-    opacity: 0.6,
-  },
-  saveButtonGradient: {
-    paddingVertical: 8,
-    paddingHorizontal: 16,
-    borderRadius: 20,
-  },
-  saveText: {
-    color: '#000000',
-    fontWeight: '600',
-    fontSize: 16,
-  },
-  scrollView: {
-    flex: 1,
-  },
-  contentContainer: {
-    paddingBottom: 40,
-  },
-  imageSection: {
-    alignItems: 'center',
-    paddingVertical: 30,
-  },
-  imageOuterContainer: {
+
+  // Logo
+  pfpBox: {
+    alignSelf: 'center',
+    marginVertical: 24,
     position: 'relative',
-    alignItems: 'center',
-    justifyContent: 'center',
   },
-  imageGradientBorder: {
-    width: 140,
-    height: 140,
-    borderRadius: 70,
-    alignItems: 'center',
-    justifyContent: 'center',
-    padding: 3,
+  pfpImage: {
+    width: 100, height: 100, borderRadius: 24,
+    backgroundColor: '#2a2a2a',
   },
-  imageContainer: {
-    position: 'relative',
-    width: '100%',
-    height: '100%',
-    borderRadius: 67,
-    overflow: 'hidden',
-    backgroundColor: '#2A2A2A',
+  pfpPlaceholder: {
+    width: 100, height: 100, borderRadius: 24,
+    backgroundColor: '#2a2a2a',
+    alignItems: 'center', justifyContent: 'center',
   },
-  profileImage: {
-    width: '100%',
-    height: '100%',
+  pfpInitials: {
+    fontSize: 34, fontWeight: '700', color: '#FFFFFF',
   },
-  editImageButton: {
-    position: 'absolute',
-    bottom: 0,
-    right: 0,
-    width: 36,
-    height: 36,
-    borderRadius: 18,
-    overflow: 'hidden',
-    ...Platform.select({
-      ios: {
-        shadowColor: '#000',
-        shadowOffset: { width: 0, height: 2 },
-        shadowOpacity: 0.3,
-        shadowRadius: 4,
-      },
-      android: {
-        elevation: 5,
-      },
-    }),
+  pfpBadge: {
+    position: 'absolute', bottom: -6, right: -6,
+    width: 30, height: 30, borderRadius: 15,
+    backgroundColor: '#FF4B8C',
+    alignItems: 'center', justifyContent: 'center',
+    borderWidth: 2, borderColor: '#0d0d0d',
   },
-  editImageGradient: {
-    width: '100%',
-    height: '100%',
-    alignItems: 'center',
-    justifyContent: 'center',
+
+  // Card
+  card: {
+    backgroundColor: '#1a1a1a',
+    borderRadius: 20,
+    paddingHorizontal: 18,
+    marginBottom: 12,
   },
-  formSection: {
-    paddingHorizontal: 24,
+  fieldRow: { paddingVertical: 14 },
+  fieldLabel: {
+    fontSize: 12, fontWeight: '600',
+    color: 'rgba(255,255,255,0.4)',
+    marginBottom: 6, letterSpacing: 0.3,
   },
-  inputGroup: {
-    marginBottom: 24,
+  fieldInput: {
+    fontSize: 15, fontWeight: '500', color: '#FFFFFF', padding: 0,
   },
-  inputLabel: {
-    color: 'rgba(255,255,255,0.7)',
-    fontSize: 14,
-    marginBottom: 8,
-    fontWeight: '500',
+  textArea: {
+    minHeight: 80,
+    textAlignVertical: 'top',
   },
-  inputContainer: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    backgroundColor: 'rgba(42, 42, 42, 0.8)',
-    borderRadius: 12,
-    borderWidth: 1,
-    borderColor: 'rgba(255,255,255,0.1)',
-    paddingHorizontal: 16,
-    overflow: 'hidden',
+  charCount: {
+    fontSize: 11,
+    color: 'rgba(255,255,255,0.25)',
+    textAlign: 'right',
+    marginTop: 6,
   },
-  inputIcon: {
-    marginRight: 12,
-  },
-  input: {
-    flex: 1,
-    color: '#fff',
-    fontSize: 16,
-    paddingVertical: 14,
-  },
-  tipContainer: {
-    flexDirection: 'row',
-    backgroundColor: 'rgba(74, 0, 224, 0.15)',
-    borderRadius: 12,
-    padding: 16,
-    marginTop: 8,
-    borderLeftWidth: 3,
-    borderLeftColor: '#4A00E0',
-  },
-  tipIcon: {
-    marginRight: 12,
-    marginTop: 2,
-  },
-  tipText: {
-    color: 'rgba(255,255,255,0.7)',
-    fontSize: 14,
-    flex: 1,
-    lineHeight: 20,
-  },
-  placeholderImage: {
-    backgroundColor: '#2A2A2A',
-    justifyContent: 'center',
-    alignItems: 'center',
-  },
-  placeholderText: {
-    color: 'rgba(255,255,255,0.5)',
-    fontSize: 24,
-    fontWeight: '600',
+
+  autoSaveHint: {
+    textAlign: 'center',
+    fontSize: 12,
+    color: 'rgba(255,255,255,0.25)',
+    marginTop: 4,
   },
 });
-
-export default EditOrganizationScreen; 

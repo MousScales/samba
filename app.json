@@ -17,24 +17,39 @@
     "ios": {
       "supportsTablet": true,
       "bundleIdentifier": "com.sambaevents",
+      "config": {
+        "googleMapsApiKey": "AIzaSyBac1aYfzeeIRBuk5Ut_cPRsioAePxCkbk"
+      },
       "infoPlist": {
-        "NSCameraUsageDescription": "This app uses the camera to scan QR codes for ticket validation.",
+        "NSCameraUsageDescription": "Samba uses the camera for profile photos, event images, and QR code scanning.",
+        "NSPhotoLibraryUsageDescription": "Samba needs access to your photos to set a profile picture and upload event images.",
+        "NSPhotoLibraryAddUsageDescription": "Samba can save images to your photo library.",
         "NSLocationWhenInUseUsageDescription": "This app uses your location to show events happening near you and help you discover local events.",
         "ITSAppUsesNonExemptEncryption": false
       }
     },
     "android": {
+      "config": {
+        "googleMaps": {
+          "apiKey": "AIzaSyBac1aYfzeeIRBuk5Ut_cPRsioAePxCkbk"
+        }
+      },
       "adaptiveIcon": {
         "foregroundImage": "./assets/adaptive-icon.png",
         "backgroundColor": "#1A1A1A"
       },
+      "softwareKeyboardLayoutMode": "resize",
       "edgeToEdgeEnabled": true,
       "package": "com.sambaevents",
       "permissions": [
         "CAMERA",
+        "READ_MEDIA_IMAGES",
+        "READ_EXTERNAL_STORAGE",
         "ACCESS_FINE_LOCATION",
         "ACCESS_COARSE_LOCATION",
         "android.permission.CAMERA",
+        "android.permission.READ_MEDIA_IMAGES",
+        "android.permission.READ_EXTERNAL_STORAGE",
         "android.permission.RECORD_AUDIO",
         "android.permission.ACCESS_COARSE_LOCATION",
         "android.permission.ACCESS_FINE_LOCATION"
@@ -46,9 +61,16 @@
     "plugins": [
       "expo-dev-client",
       [
+        "expo-image-picker",
+        {
+          "photosPermission": "Samba needs access to your photos for profile pictures and event images.",
+          "cameraPermission": "Samba uses the camera for profile photos and QR scanning."
+        }
+      ],
+      [
         "expo-camera",
         {
-          "cameraPermission": "This app uses the camera to scan QR codes for ticket validation."
+          "cameraPermission": "Samba uses the camera for profile photos, event images, and QR code scanning."
         }
       ],
       "expo-location"
@@ -58,6 +80,6 @@
         "projectId": "edadc2f9-b25a-4f4f-856f-46afc658789e"
       }
     },
-    "owner": "digaifounder"
+    "owner": "mousappsllc"
   }
 }

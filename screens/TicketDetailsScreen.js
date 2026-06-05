@@ -419,6 +419,7 @@ const styles = StyleSheet.create({
     fontWeight: '600',
     marginBottom: 2,
     textAlign: 'center',
+    textTransform: 'uppercase',
   },
   ticketDate: {
     color: 'rgba(255,255,255,0.6)',
@@ -447,6 +448,7 @@ const styles = StyleSheet.create({
     color: '#fff',
     marginBottom: 30,
     textAlign: 'center',
+    textTransform: 'uppercase',
   },
   detailsCard: {
     width: '100%',

@@ -4,6 +4,7 @@ import { Text, Icon, useTheme } from '@rneui/themed';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { LinearGradient } from 'expo-linear-gradient';
 import { useAuth } from '../context/AuthContext';
+import { useLanguage } from '../context/LanguageContext';
 
 
 const { width } = Dimensions.get('window');
@@ -81,6 +82,7 @@ const SectionTitle = ({ title, animatedValue }) => {
 
 const ProviderToggleItem = ({ user, onBecomeProvider, onSwitchMode, animatedValue }) => {
   const { theme } = useTheme();
+  const { t } = useLanguage();
   
   const translateY = animatedValue.interpolate({
     inputRange: [0, 1],
@@ -128,8 +130,8 @@ const ProviderToggleItem = ({ user, onBecomeProvider, onSwitchMode, animatedValu
             <Icon name="briefcase" type="feather" size={22} color={theme.colors.textSecondary} />
           </View>
           <View style={styles.settingContent}>
-            <Text style={[styles.settingTitle, { color: theme.colors.text }]}>Become Event Provider</Text>
-            <Text style={[styles.settingSubtitle, { color: theme.colors.textSecondary }]}>Start organizing and selling events</Text>
+            <Text style={[styles.settingTitle, { color: theme.colors.text }]}>{t('settings.provider.become')}</Text>
+            <Text style={[styles.settingSubtitle, { color: theme.colors.textSecondary }]}>{t('settings.provider.becomeSubtitle')}</Text>
           </View>
           <Icon name="chevron-right" type="feather" size={20} color={theme.colors.textSecondary} />
         </TouchableOpacity>
@@ -154,10 +156,10 @@ const ProviderToggleItem = ({ user, onBecomeProvider, onSwitchMode, animatedValu
           </View>
           <View style={styles.settingContent}>
             <Text style={[styles.settingTitle, { color: theme.colors.text }]}>
-              {currentMode === 'provider' ? 'Provider Mode' : 'Attendee Mode'}
+              {currentMode === 'provider' ? t('settings.provider.modeProvider') : t('settings.provider.modeAttendee')}
             </Text>
             <Text style={[styles.settingSubtitle, { color: theme.colors.textSecondary }]}>
-              {currentMode === 'provider' ? 'Switch to attendee view' : 'Switch to provider view'}
+              {currentMode === 'provider' ? t('settings.provider.switchToAttendee') : t('settings.provider.switchToProvider')}
             </Text>
           </View>
           <Switch
@@ -174,6 +176,7 @@ const ProviderToggleItem = ({ user, onBecomeProvider, onSwitchMode, animatedValu
 
 const SettingsScreen = ({ navigation }) => {
   const { theme } = useTheme();
+  const { t } = useLanguage();
   const { user, becomeProvider, switchMode, logout } = useAuth();
   const animatedValue = useRef(new Animated.Value(0)).current;
   
@@ -211,12 +214,12 @@ const SettingsScreen = ({ navigation }) => {
     try {
       const result = await switchMode(mode);
       if (result.success) {
-        Alert.alert('Mode Changed', `Successfully switched to ${mode} mode`);
+        Alert.alert(t('settings.alert.modeChanged.title'), t('settings.alert.modeChanged.message', { mode }));
       } else {
-        Alert.alert('Error', result.message);
+        Alert.alert(t('common.error'), result.message);
       }
     } catch (error) {
-      Alert.alert('Error', 'Failed to switch mode. Please try again.');
+      Alert.alert(t('common.error'), t('settings.error.switchMode'));
     }
   };
 
@@ -228,21 +231,21 @@ const SettingsScreen = ({ navigation }) => {
       if (supported) {
         await Linking.openURL(url);
       } else {
-        Alert.alert('Error', 'Cannot open feedback form. Please try again later.');
+        Alert.alert(t('common.error'), t('settings.error.feedbackOpen'));
       }
     } catch (error) {
-      Alert.alert('Error', 'Failed to open feedback form. Please try again later.');
+      Alert.alert(t('common.error'), t('settings.error.feedbackFailed'));
     }
   };
 
   const handleLogout = async () => {
     Alert.alert(
-      'Logout',
-      'Are you sure you want to logout?',
+      t('settings.alert.logout.title'),
+      t('settings.alert.logout.message'),
       [
-        { text: 'Cancel', style: 'cancel' },
+        { text: t('common.cancel'), style: 'cancel' },
         {
-          text: 'Logout',
+          text: t('settings.logout.title'),
           style: 'destructive',
           onPress: async () => {
             try {
@@ -252,7 +255,7 @@ const SettingsScreen = ({ navigation }) => {
                 routes: [{ name: 'Login' }],
               });
             } catch (error) {
-              Alert.alert('Error', 'Failed to logout');
+              Alert.alert(t('common.error'), t('settings.error.logoutFailed'));
             }
           },
         },
@@ -276,7 +279,7 @@ const SettingsScreen = ({ navigation }) => {
       >
         {/* Account Section */}
         <View style={styles.section}>
-          <SectionTitle title="Account" animatedValue={accountAnimation} />
+          <SectionTitle title={t('settings.section.account')} animatedValue={accountAnimation} />
           
           <ProviderToggleItem
             user={user}
@@ -289,8 +292,8 @@ const SettingsScreen = ({ navigation }) => {
           {user?.role === 'provider' && (
             <SettingItem
               icon="dollar-sign"
-              title="Provider Dashboard"
-              subtitle="View earnings and payment status"
+              title={t('settings.provider.dashboard')}
+              subtitle={t('settings.provider.dashboardSubtitle')}
               onPress={() => navigation.navigate('ProviderDashboard')}
               index={1}
               animatedValue={accountAnimation}
@@ -301,12 +304,12 @@ const SettingsScreen = ({ navigation }) => {
 
         {/* Support Section */}
         <View style={styles.section}>
-          <SectionTitle title="Support" animatedValue={supportAnimation} />
+          <SectionTitle title={t('settings.section.support')} animatedValue={supportAnimation} />
           
           <SettingItem
             icon="message-circle"
-            title="Send Feedback"
-            subtitle="Help us improve Samba"
+            title={t('settings.support.feedback')}
+            subtitle={t('settings.support.feedbackSubtitle')}
             onPress={handleSendFeedback}
             index={0}
             animatedValue={supportAnimation}
@@ -331,10 +334,10 @@ const SettingsScreen = ({ navigation }) => {
               </View>
               <View>
                 <Text style={[styles.versionLabel, { color: theme.colors.textSecondary }]}>
-                  Version
+                  {t('settings.version.label')}
                 </Text>
                 <Text style={[styles.versionNumber, { color: theme.colors.textSecondary }]}>
-                  Samba 1.0.0
+                  {t('settings.version.number')}
                 </Text>
               </View>
             </View>
@@ -369,8 +372,8 @@ const SettingsScreen = ({ navigation }) => {
               <Icon name="log-out" type="feather" size={22} color={theme.colors.textSecondary} />
             </View>
             <View style={styles.settingContent}>
-              <Text style={[styles.settingTitle, { color: theme.colors.text }]}>Logout</Text>
-              <Text style={[styles.settingSubtitle, { color: theme.colors.textSecondary }]}>Sign out of your account</Text>
+              <Text style={[styles.settingTitle, { color: theme.colors.text }]}>{t('settings.logout.title')}</Text>
+              <Text style={[styles.settingSubtitle, { color: theme.colors.textSecondary }]}>{t('settings.logout.subtitle')}</Text>
             </View>
           </TouchableOpacity>
         </Animated.View>

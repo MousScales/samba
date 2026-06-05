@@ -244,6 +244,7 @@ const styles = StyleSheet.create({
     fontSize: 24,
     fontWeight: '700',
     marginBottom: 16,
+    textTransform: 'uppercase',
   },
   detailsSection: {
     marginBottom: 16,

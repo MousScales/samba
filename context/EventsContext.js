@@ -1,8 +1,124 @@
 import React, { createContext, useContext, useState, useEffect } from 'react';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { useAuth } from './AuthContext';
+import { fetchExploreEvents } from '../services/eventsService';
 
 const EventsContext = createContext();
+
+const toValidDate = (value) => {
+  if (!value) return null;
+  const d = value instanceof Date ? new Date(value) : new Date(value);
+  return Number.isNaN(d.getTime()) ? null : d;
+};
+
+const applyTimePartsToDate = (baseDate, timeValue) => {
+  const eventDateTime = toValidDate(baseDate);
+  if (!eventDateTime || timeValue == null) return null;
+
+  if (timeValue instanceof Date) {
+    eventDateTime.setHours(
+      timeValue.getHours(),
+      timeValue.getMinutes(),
+      timeValue.getSeconds(),
+      timeValue.getMilliseconds(),
+    );
+    return eventDateTime;
+  }
+
+  const timeStr = timeValue.toString();
+  const timeParts = timeStr.match(/(\d{1,2}):(\d{2})\s*(AM|PM)/i);
+  if (timeParts) {
+    let hours = parseInt(timeParts[1], 10);
+    const minutes = parseInt(timeParts[2], 10);
+    const period = timeParts[3].toUpperCase();
+    if (period === 'PM' && hours !== 12) hours += 12;
+    else if (period === 'AM' && hours === 12) hours = 0;
+    eventDateTime.setHours(hours, minutes, 0, 0);
+  }
+  return eventDateTime;
+};
+
+const getEventStartDateTime = (event) => {
+  if (!event?.date || !event?.startTime) return null;
+  const liveStart = toValidDate(event.liveStartedAt);
+  if (liveStart) return liveStart;
+  if (event.startedEarly || event.status === 'live') {
+    const start = toValidDate(event.startTime);
+    if (start) return start;
+  }
+  return applyTimePartsToDate(event.date, event.startTime);
+};
+
+const getEventEndDateTime = (event, startDateTime) => {
+  if (!startDateTime) return null;
+  if (event.endTime && event.hasEndTime !== false) {
+    return applyTimePartsToDate(event.date, event.endTime);
+  }
+  return new Date(startDateTime.getTime() + 4 * 60 * 60 * 1000);
+};
+
+const computeEventStatus = (event, now = new Date()) => {
+  if (event.status === 'completed') return 'completed';
+
+  // Explicitly live events can only become completed — never upcoming
+  if (event.status === 'live' || event.startedEarly || event.liveStartedAt) {
+    const start = getEventStartDateTime(event);
+    if (!start) return 'live';
+    const end = getEventEndDateTime(event, start);
+    return now > end ? 'completed' : 'live';
+  }
+
+  const start = getEventStartDateTime(event);
+  if (!start) return event.status || 'upcoming';
+  const end = getEventEndDateTime(event, start);
+  if (now < start) return 'upcoming';
+  if (now >= start && now <= end) return 'live';
+  return 'completed';
+};
+
+const mergeEventUpdate = (existing, incoming) => {
+  const processed = {
+    ...incoming,
+    startTime: incoming.startTime !== undefined
+      ? toValidDate(incoming.startTime) ?? existing.startTime
+      : existing.startTime,
+    endTime: incoming.endTime !== undefined
+      ? (incoming.endTime ? toValidDate(incoming.endTime) : null)
+      : existing.endTime,
+    updatedAt: new Date(),
+  };
+
+  if (incoming.status === 'completed') {
+    return { ...existing, ...processed, status: 'completed' };
+  }
+
+  if (incoming.status === 'live' || incoming.startedEarly || incoming.liveStartedAt) {
+    const now = toValidDate(incoming.liveStartedAt) || toValidDate(incoming.startTime) || new Date();
+    return {
+      ...existing,
+      ...processed,
+      status: 'live',
+      startedEarly: true,
+      liveStartedAt: toValidDate(incoming.liveStartedAt) || existing.liveStartedAt || now,
+      startTime: toValidDate(incoming.startTime) || now,
+    };
+  }
+
+  if (existing.status === 'live' || existing.startedEarly || existing.liveStartedAt) {
+    return {
+      ...existing,
+      ...processed,
+      status: 'live',
+      startedEarly: true,
+      startTime: existing.startTime,
+      liveStartedAt: existing.liveStartedAt ?? existing.startTime,
+    };
+  }
+
+  return { ...existing, ...processed };
+};
+
+const isEventLive = (event, now = new Date()) => computeEventStatus(event, now) === 'live';
 
 export const useEvents = () => {
   const context = useContext(EventsContext);
@@ -184,6 +300,13 @@ export const EventsProvider = ({ children }) => {
     loadOrganizerFollowers();
   }, []);
 
+  // Reload from Supabase when user logs in (fresh explore feed)
+  useEffect(() => {
+    if (user?.id) {
+      loadEvents();
+    }
+  }, [user?.id]);
+
   // Load events, followed organizers, follower counts, and tickets from storage on app start
   useEffect(() => {
     loadEvents();
@@ -212,47 +335,125 @@ export const EventsProvider = ({ children }) => {
     }
   };
 
+  const normalizeStoredEvent = (event) => ({
+    ...event,
+    date: new Date(event.date),
+    startTime: new Date(event.startTime),
+    endTime: event.endTime ? new Date(event.endTime) : null,
+    liveStartedAt: event.liveStartedAt ? new Date(event.liveStartedAt) : null,
+    startedEarly: !!event.startedEarly,
+    createdAt: new Date(event.createdAt),
+    updatedAt: new Date(event.updatedAt),
+  });
+
+  const mergeLocalAndSupabaseEvents = (localEvents, remoteEvents) => {
+    const byId = new Map();
+    remoteEvents.forEach((event) => byId.set(event.id, event));
+    localEvents.forEach((local) => {
+      const remote = byId.get(local.id);
+      if (!remote) {
+        byId.set(local.id, local);
+        return;
+      }
+      const localIsLive = local.status === 'live' || local.startedEarly || local.liveStartedAt;
+      const remoteIsLive = remote.status === 'live' || remote.startedEarly || remote.liveStartedAt;
+      const localUpdated = toValidDate(local.updatedAt)?.getTime() || 0;
+      const remoteUpdated = toValidDate(remote.updatedAt)?.getTime() || 0;
+      if (localIsLive || (!remoteIsLive && localUpdated >= remoteUpdated)) {
+        byId.set(local.id, local);
+      }
+    });
+    return Array.from(byId.values());
+  };
+
+  // ── CT/New England fallback events (shown on map near New London, CT) ──────
+  const CT_FALLBACK_EVENTS = [
+    {
+      id: 'mock_ct_latin_night', title: 'New London Latin Night',
+      description: 'Live salsa band, bachata DJ, and beginner lessons. Right on the waterfront.',
+      date: new Date(Date.now() + 5 * 86400000),
+      startTime: new Date(Date.now() + 5 * 86400000),
+      endTime: null, hasEndTime: false,
+      venue: 'Oasis Waterfront Bar',
+      address: { street:'1 Golden St', city:'New London', state:'CT', zipCode:'06320', formatted:'1 Golden St, New London, CT 06320', coordinates:{ latitude:41.3557, longitude:-72.0995 } },
+      coverImage: 'https://images.unsplash.com/photo-1504609773096-104ff2c73ba4?w=800',
+      flyers: ['https://images.unsplash.com/photo-1504609773096-104ff2c73ba4?w=800'],
+      tickets: [{ id:'t1', name:'General', price:18, isFree:false, quantity:120, isUnlimited:false, availableQuantity:120 }, { id:'t2', name:'VIP', price:45, isFree:false, quantity:20, isUnlimited:false, availableQuantity:20 }],
+      organizer: { id:'mock-org-1', name:'Samba Nights' }, organizerId:'mock-org-1',
+      status:'upcoming', ticketSalesOpen:true, showOnExplore:true, category:'Nightlife', source:'fallback',
+    },
+    {
+      id: 'mock_ct_mystic_rooftop', title: 'Mystic Rooftop Sessions',
+      description: 'Sunset DJ set overlooking Mystic Harbor. Craft cocktails and local food trucks.',
+      date: new Date(Date.now() + 9 * 86400000),
+      startTime: new Date(Date.now() + 9 * 86400000),
+      endTime: null, hasEndTime: false,
+      venue: 'Steamboat Wharf',
+      address: { street:'1 Holmes St', city:'Mystic', state:'CT', zipCode:'06355', formatted:'1 Holmes St, Mystic, CT 06355', coordinates:{ latitude:41.3543, longitude:-71.9665 } },
+      coverImage: 'https://images.unsplash.com/photo-1492684223066-81342ee5ff30?w=800',
+      flyers: ['https://images.unsplash.com/photo-1492684223066-81342ee5ff30?w=800'],
+      tickets: [{ id:'t1', name:'Admission', price:22, isFree:false, quantity:200, isUnlimited:false, availableQuantity:200 }],
+      organizer: { id:'mock-org-2', name:'Pulse Events' }, organizerId:'mock-org-2',
+      status:'upcoming', ticketSalesOpen:true, showOnExplore:true, category:'Festival', source:'fallback',
+    },
+    {
+      id: 'mock_ct_groton_brunch', title: 'Groton Beats & Brunch',
+      description: 'Sunday brunch with a live DJ, bottomless mimosas, and harbor views.',
+      date: new Date(Date.now() + 3 * 86400000),
+      startTime: new Date(Date.now() + 3 * 86400000),
+      endTime: null, hasEndTime: false,
+      venue: 'Thames Club',
+      address: { street:'100 Thames St', city:'Groton', state:'CT', zipCode:'06340', formatted:'100 Thames St, Groton, CT 06340', coordinates:{ latitude:41.3501, longitude:-72.0784 } },
+      coverImage: 'https://images.unsplash.com/photo-1415201364774-f6f0ff38f28b?w=800',
+      flyers: ['https://images.unsplash.com/photo-1415201364774-f6f0ff38f28b?w=800'],
+      tickets: [{ id:'t1', name:'Brunch Seat', price:48, isFree:false, quantity:60, isUnlimited:false, availableQuantity:60 }],
+      organizer: { id:'mock-org-1', name:'Samba Nights' }, organizerId:'mock-org-1',
+      status:'upcoming', ticketSalesOpen:true, showOnExplore:true, category:'Food & Drink', source:'fallback',
+    },
+    {
+      id: 'mock_ct_newhaven_indie', title: 'New Haven Indie Night',
+      description: 'Three local indie acts at a historic venue near Yale.',
+      date: new Date(Date.now() + 12 * 86400000),
+      startTime: new Date(Date.now() + 12 * 86400000),
+      endTime: null, hasEndTime: false,
+      venue: "Toad's Place",
+      address: { street:'300 York St', city:'New Haven', state:'CT', zipCode:'06511', formatted:'300 York St, New Haven, CT 06511', coordinates:{ latitude:41.3083, longitude:-72.9279 } },
+      coverImage: 'https://images.unsplash.com/photo-1470225620780-dba8ba36b745?w=800',
+      flyers: ['https://images.unsplash.com/photo-1470225620780-dba8ba36b745?w=800'],
+      tickets: [{ id:'t1', name:'Standing', price:25, isFree:false, quantity:150, isUnlimited:false, availableQuantity:150 }],
+      organizer: { id:'mock-org-2', name:'Pulse Events' }, organizerId:'mock-org-2',
+      status:'upcoming', ticketSalesOpen:true, showOnExplore:true, category:'Live Music', source:'fallback',
+    },
+  ];
+
   const loadEvents = async () => {
     try {
       setLoading(true);
       const storedEvents = await AsyncStorage.getItem('events');
+      let localEvents = [];
+
       if (storedEvents) {
-        const parsedEvents = JSON.parse(storedEvents);
-        
-        // Convert date strings back to Date objects
-        const eventsWithDates = parsedEvents.map(event => ({
-          ...event,
-          date: new Date(event.date),
-          startTime: new Date(event.startTime),
-          endTime: event.endTime ? new Date(event.endTime) : null,
-          createdAt: new Date(event.createdAt),
-          updatedAt: new Date(event.updatedAt)
-        }));
-        
-        console.log('📅 Loaded events from storage:', eventsWithDates.length, 'events');
-        
-        // Debug ticket availability for each event
-        eventsWithDates.forEach(event => {
-          if (event.tickets && event.tickets.length > 0) {
-            console.log(`🎪 Event "${event.title}" ticket availability:`, event.tickets.map(t => ({
-              name: t.name,
-              quantity: t.quantity,
-              availableQuantity: t.availableQuantity,
-              sold: t.sold,
-              isUnlimited: t.isUnlimited
-            })));
-          }
-        });
-        
-        setEvents(eventsWithDates);
+        localEvents = JSON.parse(storedEvents).map(normalizeStoredEvent);
+        console.log('📅 Loaded events from storage:', localEvents.length);
       } else {
-        // No stored events found, initialize empty array
-        setEvents([]);
-        console.log('📅 No stored events found, starting with empty array');
+        console.log('📅 No stored events found');
       }
+
+      const remoteEvents = await fetchExploreEvents();
+      if (remoteEvents.length > 0) {
+        console.log('☁️ Loaded explore events from Suupabase:', remoteEvents.length);
+      }
+
+      // Always merge CT fallback events (they have unique IDs, won't duplicate)
+      const fallbackFiltered = CT_FALLBACK_EVENTS.filter(
+        fb => !remoteEvents.some(r => r.id === fb.id) && !localEvents.some(l => l.id === fb.id)
+      );
+
+      const merged = mergeLocalAndSupabaseEvents(localEvents, [...remoteEvents, ...fallbackFiltered]);
+      setEvents(merged);
     } catch (error) {
       console.error('Error loading events:', error);
-      setEvents([]);
+      setEvents(CT_FALLBACK_EVENTS); // at minimum show CT events
     } finally {
       setLoading(false);
     }
@@ -304,6 +505,44 @@ export const EventsProvider = ({ children }) => {
 
   const getEventActivities = (eventId) => {
     return eventActivities[eventId] || [];
+  };
+
+  const registerEventScanner = async (eventId, scannerInfo) => {
+    try {
+      const event = events.find((e) => e.id === eventId);
+      if (!event) return false;
+
+      const scannerKey = scannerInfo.id || scannerInfo.email || scannerInfo.name;
+      const alreadyRegistered = (event.activeScanners || []).some(
+        (s) => (s.id || s.email || s.name) === scannerKey,
+      );
+      if (alreadyRegistered) return false;
+
+      const scanner = {
+        id: scannerInfo.id || scannerKey,
+        name: scannerInfo.name || 'Scanner',
+        email: scannerInfo.email || null,
+        profilePicture: scannerInfo.profilePicture || null,
+        joinedAt: new Date(),
+      };
+
+      await updateEvent(eventId, {
+        activeScanners: [...(event.activeScanners || []), scanner],
+      });
+
+      await logActivity(eventId, {
+        type: 'scanner_added',
+        icon: 'smartphone',
+        scannerName: scanner.name,
+        avatar: scanner.profilePicture || null,
+        text: `${scanner.name} joined as a scanner`,
+      });
+
+      return true;
+    } catch (error) {
+      console.error('Error registering event scanner:', error);
+      return false;
+    }
   };
 
   const followOrganizer = async (organizerName, organizerId) => {
@@ -428,7 +667,7 @@ export const EventsProvider = ({ children }) => {
     try {
       const newEvent = {
         ...eventData,
-        id: Date.now().toString() + Math.random().toString(36).substr(2, 9),
+        id: eventData.id || Date.now().toString() + Math.random().toString(36).substr(2, 9),
         createdAt: new Date(),
         updatedAt: new Date(),
         status: 'upcoming',
@@ -456,27 +695,34 @@ export const EventsProvider = ({ children }) => {
 
   const updateEvent = async (eventId, updatedData) => {
     try {
-      const updatedEvents = events.map(event => {
-        if (event.id === eventId) {
-          // Convert any date strings to Date objects
-          const processedData = {
-            ...updatedData,
-            endTime: updatedData.endTime ? new Date(updatedData.endTime) : null,
-            updatedAt: new Date()
-          };
-          return { ...event, ...processedData };
-        }
-        return event;
+      let updatedEvent = null;
+      let nextEvents = [];
+
+      setEvents((prev) => {
+        nextEvents = prev.map((event) => {
+          if (event.id !== eventId) return event;
+          updatedEvent = mergeEventUpdate(event, updatedData);
+          return updatedEvent;
+        });
+        return nextEvents;
       });
-      
-      setEvents(updatedEvents);
-      await saveEvents(updatedEvents);
-      
-      return updatedEvents.find(event => event.id === eventId);
+
+      await saveEvents(nextEvents);
+      return updatedEvent;
     } catch (error) {
       console.error('Error updating event:', error);
       throw error;
     }
+  };
+
+  const startEventLive = async (eventId) => {
+    const now = new Date();
+    return updateEvent(eventId, {
+      status: 'live',
+      startedEarly: true,
+      liveStartedAt: now,
+      startTime: now,
+    });
   };
 
   const deleteEvent = async (eventId) => {
@@ -499,17 +745,18 @@ export const EventsProvider = ({ children }) => {
   };
 
   const getUpcomingEvents = () => {
-    // Filter events by status - rely on the automatic status update for accuracy
-    return events.filter(event => {
-      return event.status === 'upcoming';
-    }).sort((a, b) => new Date(a.date) - new Date(b.date));
+    return events
+      .filter((event) => {
+        if (event.status === 'live' || event.startedEarly || event.liveStartedAt) return false;
+        return computeEventStatus(event) === 'upcoming';
+      })
+      .sort((a, b) => new Date(a.date) - new Date(b.date));
   };
 
   const getPastEvents = () => {
-    // Filter events by status - rely on the automatic status update for accuracy
-    return events.filter(event => {
-      return event.status === 'completed';
-    }).sort((a, b) => new Date(b.date) - new Date(a.date));
+    return events
+      .filter(event => computeEventStatus(event) === 'completed')
+      .sort((a, b) => new Date(b.date) - new Date(a.date));
   };
 
   const searchEvents = (query) => {
@@ -725,6 +972,7 @@ export const EventsProvider = ({ children }) => {
               purchaseDate: new Date(),
               buyerName: userInfo.name,
               buyerEmail: userInfo.email,
+              buyerAvatar: userInfo.profilePicture || null,
               status: 'upcoming',
               qrCode: `ticket_${Date.now()}_${Math.random().toString(36).substr(2, 9)}_${i}`, // Different QR code for each ticket
               organizer: event.organizer,
@@ -828,6 +1076,7 @@ export const EventsProvider = ({ children }) => {
         text: `${totalTicketsPurchased} ticket${totalTicketsPurchased > 1 ? 's' : ''} purchased by ${userInfo.name}`,
         color: '#FFD700',
         purchaserName: userInfo.name,
+        avatar: userInfo.profilePicture || null,
         ticketCount: totalTicketsPurchased,
         ticketTypes: Object.keys(ticketDetails).filter(key => ticketDetails[key] > 0)
       });
@@ -1014,7 +1263,8 @@ export const EventsProvider = ({ children }) => {
         color: '#4CAF50',
         ticketId: ticketId,
         attendeeName: ticket.buyerName,
-        ticketType: ticket.ticketType
+        avatar: ticket.buyerAvatar || null,
+        ticketType: ticket.ticketType,
       });
       
       console.log('✅ Ticket scanned successfully:', {
@@ -1032,209 +1282,58 @@ export const EventsProvider = ({ children }) => {
 
   const getLiveEvents = () => {
     const now = new Date();
-    return events.filter(event => {
-      // Skip if event doesn't have required time fields
-      if (!event.date || !event.startTime) {
-        return false;
-      }
-
-      const eventDateTime = new Date(event.date);
-      
-      // Handle both Date objects and time strings
-      if (event.startTime instanceof Date) {
-        eventDateTime.setHours(
-          event.startTime.getHours(),
-          event.startTime.getMinutes(),
-          event.startTime.getSeconds()
-        );
-      } else {
-        // Handle time strings like "10:20 AM"
-        const timeStr = event.startTime.toString();
-        const timeParts = timeStr.match(/(\d{1,2}):(\d{2})\s*(AM|PM)/i);
-        if (timeParts) {
-          let hours = parseInt(timeParts[1], 10);
-          const minutes = parseInt(timeParts[2], 10);
-          const period = timeParts[3].toUpperCase();
-          
-          if (period === 'PM' && hours !== 12) {
-            hours += 12;
-          } else if (period === 'AM' && hours === 12) {
-            hours = 0;
-          }
-          
-          eventDateTime.setHours(hours, minutes, 0);
-        }
-      }
-      
-      // If event has end time, check if current time is between start and end
-      if (event.endTime) {
-        const eventEndDateTime = new Date(event.date);
-        
-        if (event.endTime instanceof Date) {
-          eventEndDateTime.setHours(
-            event.endTime.getHours(),
-            event.endTime.getMinutes(),
-            event.endTime.getSeconds()
-          );
-        } else {
-          // Handle time strings
-          const endTimeStr = event.endTime.toString();
-          const endTimeParts = endTimeStr.match(/(\d{1,2}):(\d{2})\s*(AM|PM)/i);
-          if (endTimeParts) {
-            let endHours = parseInt(endTimeParts[1], 10);
-            const endMinutes = parseInt(endTimeParts[2], 10);
-            const endPeriod = endTimeParts[3].toUpperCase();
-            
-            if (endPeriod === 'PM' && endHours !== 12) {
-              endHours += 12;
-            } else if (endPeriod === 'AM' && endHours === 12) {
-              endHours = 0;
-            }
-            
-            eventEndDateTime.setHours(endHours, endMinutes, 0);
-          }
-        }
-        
-        return now >= eventDateTime && now <= eventEndDateTime;
-      }
-      
-      // If no end time, event is considered live for 4 hours after start time
-      const eventEndDateTime = new Date(eventDateTime.getTime() + (4 * 60 * 60 * 1000));
-      return now >= eventDateTime && now <= eventEndDateTime;
-    }).sort((a, b) => new Date(a.startTime) - new Date(b.startTime));
+    return events
+      .filter(event => isEventLive(event, now))
+      .sort((a, b) => {
+        const aStart = getEventStartDateTime(a) || new Date(0);
+        const bStart = getEventStartDateTime(b) || new Date(0);
+        return aStart - bStart;
+      });
   };
 
-  // Event status update function
-  const updateEventStatuses = () => {
+  const runStatusUpdate = () => {
+    setEvents((prev) => {
       const now = new Date();
       let hasChanges = false;
-      
-      const updatedEvents = events.map(event => {
-        // Skip if event doesn't have required time fields
-        if (!event.date || !event.startTime) {
+
+      const updatedEvents = prev.map((event) => {
+        if (!event.date || !event.startTime) return event;
+
+        const newStatus = computeEventStatus(event, now);
+
+        // Never demote a live/started event back to upcoming
+        if (
+          newStatus === 'upcoming'
+          && (event.status === 'live' || event.startedEarly || event.liveStartedAt)
+        ) {
           return event;
         }
 
-        const eventDateTime = new Date(event.date);
-        // Handle both Date objects and time strings
-        if (event.startTime instanceof Date) {
-          eventDateTime.setHours(
-            event.startTime.getHours(),
-            event.startTime.getMinutes(),
-            event.startTime.getSeconds()
-          );
-        } else {
-          // Handle time strings like "10:20 AM"
-          const timeStr = event.startTime.toString();
-          const timeParts = timeStr.match(/(\d{1,2}):(\d{2})\s*(AM|PM)/i);
-          if (timeParts) {
-            let hours = parseInt(timeParts[1], 10);
-            const minutes = parseInt(timeParts[2], 10);
-            const period = timeParts[3].toUpperCase();
-            
-            if (period === 'PM' && hours !== 12) {
-              hours += 12;
-            } else if (period === 'AM' && hours === 12) {
-              hours = 0;
-            }
-            
-            eventDateTime.setHours(hours, minutes, 0);
-          }
-        }
-
-        let newStatus = event.status;
-        
-        // If event has end time, use it to determine status
-        if (event.endTime) {
-          const eventEndDateTime = new Date(event.date);
-          
-          if (event.endTime instanceof Date) {
-            eventEndDateTime.setHours(
-              event.endTime.getHours(),
-              event.endTime.getMinutes(),
-              event.endTime.getSeconds()
-            );
-          } else {
-            // Handle time strings
-            const endTimeStr = event.endTime.toString();
-            const endTimeParts = endTimeStr.match(/(\d{1,2}):(\d{2})\s*(AM|PM)/i);
-            if (endTimeParts) {
-              let endHours = parseInt(endTimeParts[1], 10);
-              const endMinutes = parseInt(endTimeParts[2], 10);
-              const endPeriod = endTimeParts[3].toUpperCase();
-              
-              if (endPeriod === 'PM' && endHours !== 12) {
-                endHours += 12;
-              } else if (endPeriod === 'AM' && endHours === 12) {
-                endHours = 0;
-              }
-              
-              eventEndDateTime.setHours(endHours, endMinutes, 0);
-            }
-          }
-          
-          if (now < eventDateTime) {
-            newStatus = 'upcoming';
-          } else if (now >= eventDateTime && now <= eventEndDateTime) {
-            newStatus = 'live';
-          } else {
-            newStatus = 'completed';
-          }
-        } else {
-          // If no end time, use 4-hour window
-          const eventEndDateTime = new Date(eventDateTime.getTime() + (4 * 60 * 60 * 1000));
-          
-          if (now < eventDateTime) {
-            newStatus = 'upcoming';
-          } else if (now >= eventDateTime && now <= eventEndDateTime) {
-            newStatus = 'live';
-          } else {
-            newStatus = 'completed';
-          }
-        }
-
-        // Only update if status has changed
         if (newStatus !== event.status) {
-          console.log(`🔄 Event status updated: "${event.title}" from "${event.status}" to "${newStatus}"`);
           hasChanges = true;
           return { ...event, status: newStatus, updatedAt: new Date() };
         }
         return event;
       });
 
-      // Only save if there are actual changes
       if (hasChanges) {
-        console.log('📱 Saving updated event statuses...');
-        setEvents(updatedEvents);
         saveEvents(updatedEvents);
+        return updatedEvents;
       }
-    };
-
-  // Function to manually trigger status update
-  const triggerStatusUpdate = () => {
-    updateEventStatuses();
+      return prev;
+    });
   };
 
-  // Trigger status update when events are first loaded or changed
-  useEffect(() => {
-    if (events.length > 0) {
-      // Small delay to ensure events are properly set before status update
-      const timeoutId = setTimeout(() => {
-        updateEventStatuses();
-      }, 100);
-      
-      return () => clearTimeout(timeoutId);
-    }
-  }, [events.length]);
+  const triggerStatusUpdate = () => {
+    runStatusUpdate();
+  };
 
-  // Add automatic status update functionality
+  // Periodic status sync — does not re-run on every events change
   useEffect(() => {
-    // Update statuses immediately and then every 10 seconds for maximum responsiveness
-    updateEventStatuses();
-    const intervalId = setInterval(updateEventStatuses, 10000);
-
+    runStatusUpdate();
+    const intervalId = setInterval(runStatusUpdate, 10000);
     return () => clearInterval(intervalId);
-  }, [events]);
+  }, []);
 
   // Function to clean up unwanted organizer events
   const cleanupOrganizerEvents = async (organizerNamesToRemove) => {
@@ -1325,7 +1424,7 @@ export const EventsProvider = ({ children }) => {
                 name: userProviderInfo.organizationName,
                 organizationName: userProviderInfo.organizationName,
                 description: userProviderInfo.description,
-                profilePicture: event.organizer?.profilePicture || userProviderInfo.partyLogo,
+                profilePicture: userProviderInfo.partyLogo ?? event.organizer?.profilePicture,
                 contactEmail: userProviderInfo.partyEmail,
                 contactPhone: userProviderInfo.partyPhone
               },
@@ -1501,12 +1600,15 @@ export const EventsProvider = ({ children }) => {
     loading,
     addEvent,
     updateEvent,
+    startEventLive,
     deleteEvent,
     getEventById,
     getEventsByOrganizer,
     getUpcomingEvents,
     getPastEvents,
     getLiveEvents,
+    getEventStatus: (event) => computeEventStatus(event),
+    getEventLiveStartTime: (event) => getEventStartDateTime(event),
     searchEvents,
     getEventsByCategory,
     getEventsNearUser,
@@ -1527,6 +1629,7 @@ export const EventsProvider = ({ children }) => {
     scanTicket,
     getEventActivities,
     logActivity,
+    registerEventScanner,
     cleanupOrganizerEvents,
     clearAllEvents,
     updateEventsWithOrganizationNames,

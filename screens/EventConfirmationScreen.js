@@ -1,502 +1,259 @@
-import React from 'react';
+import React, { useLayoutEffect } from 'react';
 import {
-  StyleSheet,
-  View,
-  ScrollView,
-  TouchableOpacity,
-  Image,
-  Dimensions,
-  Share,
-  Platform
+  StyleSheet, View, ScrollView, TouchableOpacity,
+  Image, Dimensions, Share, Platform,
 } from 'react-native';
 import { Text, Icon } from '@rneui/themed';
-import { SafeAreaView } from 'react-native-safe-area-context';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { LinearGradient } from 'expo-linear-gradient';
 import { StatusBar } from 'expo-status-bar';
+import { useLanguage } from '../context/LanguageContext';
+
+const { width, height: SCREEN_H } = Dimensions.get('window');
+const HERO_H = Math.round(SCREEN_H * 0.48);
 
 const EventConfirmationScreen = ({ navigation, route }) => {
   const { eventData } = route.params;
-  
-  // Format time to display
-  const formatTime = (date) => {
-    return date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
-  };
-  
-  // Format date to display
-  const formatDate = (date) => {
-    const options = { weekday: 'long', month: 'long', day: 'numeric', year: 'numeric' };
-    return date.toLocaleDateString([], options);
-  };
+  const { t, locale } = useLanguage();
+  const insets = useSafeAreaInsets();
 
-  // Handle share event
-  const handleShareEvent = async () => {
+  useLayoutEffect(() => {
+    navigation.setOptions({ headerShown: false });
+  }, [navigation]);
+
+  // ── Helpers ────────────────────────────────────────────────────────────────
+  const fmt = (date, opts) =>
+    date instanceof Date && !isNaN(date)
+      ? date.toLocaleString(locale, opts)
+      : '—';
+
+  const dateStr = fmt(new Date(eventData.date), { weekday:'short', month:'short', day:'numeric' });
+  const yearStr = fmt(new Date(eventData.date), { year:'numeric' });
+  const timeStr = fmt(new Date(eventData.startTime), { hour:'numeric', minute:'2-digit', hour12:true });
+  const endStr  = eventData.hasEndTime && eventData.endTime
+    ? fmt(new Date(eventData.endTime), { hour:'numeric', minute:'2-digit', hour12:true })
+    : null;
+
+  const venue   = eventData.venue || eventData.address?.city || '—';
+  const address = eventData.address?.formatted || eventData.address?.city || '';
+  const heroImg = eventData.coverImage || eventData.flyers?.[0];
+
+  // Ticket summary
+  const paidTix    = eventData.tickets.filter(t => !t.isFree);
+  const freeTix    = eventData.tickets.filter(t => t.isFree);
+  const hasUnlim   = eventData.tickets.some(t => t.isUnlimited);
+  const totalSpots = hasUnlim ? '∞' : eventData.tickets.reduce((s, t) => s + (t.quantity || 0), 0);
+  const lowestPrice = paidTix.length > 0 ? Math.min(...paidTix.map(t => t.price)) : null;
+
+  const handleShare = async () => {
     try {
-      const paidTickets = eventData.tickets.filter(t => !t.isFree);
-      const lowestPrice = paidTickets.length > 0 ? Math.min(...paidTickets.map(t => t.price)) : null;
-      
-      const priceText = lowestPrice ? `🎫 Starting at $${lowestPrice.toFixed(2)}` : '🎫 Free event!';
-      
-      const shareMessage = `🎉 Check out this event: ${eventData.title}
-📅 ${formatDate(new Date(eventData.date))} at ${formatTime(new Date(eventData.startTime))}
-📍 ${eventData.address.formatted}
-${priceText}
-
-Created with Samba!`;
-
       await Share.share({
-        message: shareMessage,
+        message: `🎉 ${eventData.title}\n📅 ${dateStr} · ${timeStr}\n📍 ${address}\n\nCreated with Samba`,
         title: eventData.title,
       });
-    } catch (error) {
-      console.error('Error sharing:', error);
-    }
+    } catch {}
   };
 
-  // Handle view event details
-  const handleViewEvent = () => {
-    navigation.navigate('EventDetails', { event: eventData });
-  };
+  const handleViewEvent = () => navigation.navigate('EventDetails', { event: eventData });
 
-  // Handle return to profile
-  const handleReturnToProfile = () => {
-    navigation.reset({
-      index: 0,
-      routes: [{ name: 'Profile' }],
-    });
-  };
-
-  // Calculate ticket summary
-  const ticketSummary = {
-    types: eventData.tickets.length,
-    total: eventData.tickets.some(t => t.isUnlimited) ? 'Unlimited' : 
-      eventData.tickets.reduce((sum, t) => sum + (t.isUnlimited ? 0 : (t.quantity || 0)), 0),
-    freeTickets: eventData.tickets.filter(t => t.isFree && !t.isUnlimited).reduce((sum, t) => sum + (t.quantity || 0), 0),
-    paidTickets: eventData.tickets.filter(t => !t.isFree && !t.isUnlimited).reduce((sum, t) => sum + (t.quantity || 0), 0),
-    hasUnlimitedFree: eventData.tickets.some(t => t.isFree && t.isUnlimited),
-    hasUnlimitedPaid: eventData.tickets.some(t => !t.isFree && t.isUnlimited),
-    hasUnlimited: eventData.tickets.some(t => t.isUnlimited),
-    lowestPrice: eventData.tickets.filter(t => !t.isFree).length > 0 
-      ? Math.min(...eventData.tickets.filter(t => !t.isFree).map(t => t.price))
-      : 0
-  };
+  const handleDashboard = () =>
+    navigation.reset({ index: 0, routes: [{ name: 'Profile' }] });
 
   return (
-    <View style={styles.container}>
+    <View style={st.root}>
       <StatusBar style="light" />
-      <LinearGradient
-        colors={['#1a1a1a', '#232323']}
-        style={StyleSheet.absoluteFill}
-      />
-      
-      <SafeAreaView style={styles.safeArea}>
-        {/* Header */}
-        <View style={styles.header}>
-          <TouchableOpacity onPress={handleReturnToProfile}>
-            <Icon name="x" type="feather" size={24} color="#FFFFFF" />
-          </TouchableOpacity>
-          
-          <Text style={styles.headerTitle}>Event Created!</Text>
-          
-          <TouchableOpacity onPress={handleShareEvent}>
-            <Icon name="share" type="feather" size={24} color="#FFFFFF" />
-          </TouchableOpacity>
+
+      <ScrollView
+        showsVerticalScrollIndicator={false}
+        contentContainerStyle={{ paddingBottom: insets.bottom + 100 }}
+        bounces
+      >
+        {/* ── Hero ──────────────────────────────────────────────────────── */}
+        <View style={[st.hero, { height: HERO_H }]}>
+          {heroImg ? (
+            <Image source={{ uri: heroImg }} style={StyleSheet.absoluteFill} resizeMode="cover" />
+          ) : (
+            <View style={[StyleSheet.absoluteFill, { backgroundColor: '#1a1a1a' }]} />
+          )}
+
+          {/* Dark gradient over image */}
+          <LinearGradient
+            colors={['rgba(0,0,0,0.15)', 'rgba(0,0,0,0.2)', 'rgba(0,0,0,0.75)', '#0a0a0a']}
+            style={StyleSheet.absoluteFill}
+          />
+
+          {/* Floating nav */}
+          <View style={[st.nav, { paddingTop: insets.top + 10 }]}>
+            <TouchableOpacity style={st.navBtn} onPress={handleDashboard} activeOpacity={0.8}>
+              <Icon name="x" type="feather" size={18} color="#fff" />
+            </TouchableOpacity>
+            <TouchableOpacity onPress={handleShare} activeOpacity={0.7} hitSlop={{top:10,bottom:10,left:10,right:10}}>
+              <Icon name="share" type="feather" size={20} color="#fff" />
+            </TouchableOpacity>
+          </View>
+
+          {/* Hero text */}
+          <View style={st.heroText}>
+            <Text style={st.heroTitle} numberOfLines={3}>{eventData.title}</Text>
+            <View style={st.heroSubRow}>
+              <Text style={st.heroSub}>Your event is published and ready for attendees</Text>
+              <View style={st.greenCheck}>
+                <Icon name="check" type="feather" size={11} color="#fff" />
+              </View>
+            </View>
+          </View>
         </View>
 
-        <ScrollView style={styles.scrollView} contentContainerStyle={styles.contentContainer}>
-          {/* Success Animation/Icon */}
-          <View style={styles.successContainer}>
-            <View style={styles.successIcon}>
-              <Icon name="check" type="feather" size={40} color="#4CAF50" />
-            </View>
-            <Text style={styles.successTitle}>Event Created Successfully!</Text>
-            <Text style={styles.successSubtitle}>Your event is now live and ready for attendees</Text>
-          </View>
-
-          {/* Event Preview Card */}
-          <TouchableOpacity 
-            style={styles.eventCard}
-            onPress={handleViewEvent}
-            activeOpacity={0.9}
-          >
-            <Image
-              source={{ uri: eventData.coverImage }}
-              style={styles.eventImage}
-              resizeMode="cover"
-            />
-            <LinearGradient
-              colors={['transparent', 'rgba(0,0,0,0.8)']}
-              style={styles.imageOverlay}
-            />
-            <View style={styles.eventContent}>
-              <Text style={styles.eventTitle}>{eventData.title}</Text>
-              <View style={styles.eventDetails}>
-                <View style={styles.detailRow}>
-                  <Icon name="calendar" type="feather" size={16} color="#FFD700" />
-                  <Text style={styles.detailText}>
-                    {formatDate(new Date(eventData.date))}
-                  </Text>
-                </View>
-                <View style={styles.detailRow}>
-                  <Icon name="clock" type="feather" size={16} color="#FFD700" />
-                  <Text style={styles.detailText}>
-                    {formatTime(new Date(eventData.startTime))}
-                    {eventData.hasEndTime && ` - ${formatTime(new Date(eventData.endTime))}`}
-                  </Text>
-                </View>
-                <View style={styles.detailRow}>
-                  <Icon name="map-pin" type="feather" size={16} color="#FFD700" />
-                  <Text style={styles.detailText}>
-                    {eventData.address.formatted}
-                  </Text>
-                </View>
-              </View>
-            </View>
+        {/* ── Info strip (3-column, matches EventDetails) ────────────────── */}
+        <View style={st.infoCard}>
+          <TouchableOpacity style={st.infoBlock} onPress={() => {}} activeOpacity={0.7}>
+            <Text style={st.infoLabel}>VENUE</Text>
+            <Text style={st.infoBig} numberOfLines={1}>{venue}</Text>
+            {!!address && <Text style={st.infoSub} numberOfLines={1}>{address}</Text>}
           </TouchableOpacity>
-
-          {/* Ticket Summary */}
-          <View style={styles.summaryCard}>
-            <Text style={styles.summaryTitle}>Ticket Summary</Text>
-            
-            <View style={styles.summaryRow}>
-              <Text style={styles.summaryLabel}>Total Ticket Types:</Text>
-              <Text style={styles.summaryValue}>{ticketSummary.types}</Text>
-            </View>
-            
-            <View style={styles.summaryRow}>
-              <Text style={styles.summaryLabel}>Total Tickets Available:</Text>
-              <Text style={styles.summaryValue}>
-                {typeof ticketSummary.total === 'string' ? ticketSummary.total : ticketSummary.total.toLocaleString()}
-              </Text>
-            </View>
-            
-            {ticketSummary.freeTickets > 0 && (
-              <View style={styles.summaryRow}>
-                <Text style={styles.summaryLabel}>Free Tickets:</Text>
-                <Text style={styles.summaryValue}>{ticketSummary.freeTickets}</Text>
-              </View>
-            )}
-            
-            {ticketSummary.hasUnlimitedFree && (
-              <View style={styles.summaryRow}>
-                <Text style={styles.summaryLabel}>Free Tickets:</Text>
-                <Text style={styles.summaryValue}>Unlimited</Text>
-              </View>
-            )}
-            
-            {ticketSummary.paidTickets > 0 && (
-              <View style={styles.summaryRow}>
-                <Text style={styles.summaryLabel}>Paid Tickets:</Text>
-                <Text style={styles.summaryValue}>{ticketSummary.paidTickets}</Text>
-              </View>
-            )}
-            
-            {ticketSummary.hasUnlimitedPaid && (
-              <View style={styles.summaryRow}>
-                <Text style={styles.summaryLabel}>Paid Tickets:</Text>
-                <Text style={styles.summaryValue}>Unlimited</Text>
-              </View>
-            )}
-            
-            {ticketSummary.lowestPrice > 0 && (
-              <View style={styles.summaryRow}>
-                <Text style={styles.summaryLabel}>Starting Price:</Text>
-                <Text style={styles.summaryValue}>${ticketSummary.lowestPrice.toFixed(2)}</Text>
-              </View>
-            )}
+          <View style={st.infoSep} />
+          <View style={st.infoBlock}>
+            <Text style={st.infoLabel}>DATE</Text>
+            <Text style={st.infoBig}>{dateStr}</Text>
+            <Text style={st.infoSub}>{yearStr}</Text>
           </View>
+          <View style={st.infoSep} />
+          <View style={st.infoBlock}>
+            <Text style={st.infoLabel}>TIME</Text>
+            <Text style={st.infoBig}>{timeStr}</Text>
+            {endStr && <Text style={st.infoSub}>ends {endStr}</Text>}
+          </View>
+        </View>
 
-          {/* Organizer Info */}
-          <View style={styles.organizerCard}>
-            <Text style={styles.summaryTitle}>Event Organizer</Text>
-            
-            <View style={styles.organizerInfo}>
-              {eventData.organizer.avatar ? (
-                <Image 
-                  source={{ uri: eventData.organizer.avatar }} 
-                  style={styles.organizerAvatar}
-                />
-              ) : (
-                <View style={[styles.organizerAvatar, styles.avatarPlaceholder]}>
-                  <Text style={styles.avatarText}>
-                    {(eventData.organizer.name || 'O').charAt(0).toUpperCase()}
+        {/* ── Ticket summary ─────────────────────────────────────────────── */}
+        <View style={st.section}>
+          <Text style={st.sectionTitle}>Ticket Summary</Text>
+          <View style={st.card}>
+            {eventData.tickets.map((tix, i) => (
+              <View key={tix.id} style={[st.tixRow, i > 0 && st.tixRowBorder]}>
+                <View style={{ flex: 1 }}>
+                  <Text style={st.tixName}>{tix.name}</Text>
+                  <Text style={st.tixMeta}>
+                    {tix.isUnlimited ? 'Unlimited' : `${tix.quantity} spots`}
                   </Text>
                 </View>
-              )}
-              
-              <View style={styles.organizerDetails}>
-                <Text style={styles.organizerName}>{eventData.organizer.name}</Text>
-                {eventData.organizer.description && (
-                  <Text style={styles.organizerDescription}>{eventData.organizer.description}</Text>
-                )}
+                <Text style={st.tixPrice}>
+                  {tix.isFree ? 'Free' : `$${Number(tix.price).toFixed(2)}`}
+                </Text>
               </View>
+            ))}
+            <View style={st.tixFooter}>
+              <Text style={st.tixFooterLabel}>Total capacity</Text>
+              <Text style={st.tixFooterVal}>{String(totalSpots)}</Text>
+            </View>
+            {lowestPrice !== null && (
+              <View style={[st.tixFooter, { marginTop: 4 }]}>
+                <Text style={st.tixFooterLabel}>Starting at</Text>
+                <Text style={[st.tixFooterVal, { color: '#FF4B8C' }]}>${lowestPrice.toFixed(2)}</Text>
+              </View>
+            )}
+          </View>
+        </View>
+
+        {/* ── Verification code ──────────────────────────────────────────── */}
+        <View style={st.section}>
+          <Text style={st.sectionTitle}>Check-in Code</Text>
+          <View style={st.card}>
+            <Text style={st.codeHint}>Give this to your security — they enter it to start scanning attendee tickets at the door</Text>
+            <View style={st.codeWrap}>
+              <Text style={st.code}>{eventData.verificationCode}</Text>
             </View>
           </View>
+        </View>
 
-          {/* Verification Code Section */}
-          <View style={styles.verificationCard}>
-            <Text style={styles.summaryTitle}>Event Verification Code</Text>
-            <View style={styles.verificationContent}>
-              <Text style={styles.verificationCode}>{eventData.verificationCode}</Text>
-              <Text style={styles.verificationDescription}>
-                Share this code with your ticket scanners. They will need it to validate tickets at the event.
-              </Text>
-            </View>
-          </View>
+      </ScrollView>
 
-          {/* Action Buttons */}
-          <View style={styles.actionButtons}>
-            <TouchableOpacity 
-              style={styles.shareButton}
-              onPress={handleShareEvent}
-            >
-              <Icon name="share-2" type="feather" size={20} color="#FFFFFF" />
-              <Text style={styles.buttonText}>Share Event</Text>
-            </TouchableOpacity>
-            
-            <TouchableOpacity 
-              style={styles.viewButton}
-              onPress={handleViewEvent}
-            >
-              <Icon name="eye" type="feather" size={20} color="#FFFFFF" />
-              <Text style={styles.buttonText}>View Details</Text>
-            </TouchableOpacity>
-          </View>
-
-          {/* Return to Profile Button */}
-          <TouchableOpacity 
-            style={styles.returnButton}
-            onPress={handleReturnToProfile}
+      {/* ── Bottom bar ─────────────────────────────────────────────────────── */}
+      <View style={[st.bottomBar, { paddingBottom: insets.bottom + 12 }]}>
+        <TouchableOpacity style={st.primaryBtn} onPress={handleViewEvent} activeOpacity={0.85}>
+          <LinearGradient
+            colors={['#FF4B8C', '#d63072']}
+            style={st.primaryGrad}
+            start={{ x: 0, y: 0 }} end={{ x: 1, y: 0 }}
           >
-            <Text style={styles.returnButtonText}>Return to Profile</Text>
-          </TouchableOpacity>
-        </ScrollView>
-      </SafeAreaView>
+            <Text style={st.primaryBtnTxt}>View Event</Text>
+            <Icon name="arrow-right" type="feather" size={16} color="#fff" />
+          </LinearGradient>
+        </TouchableOpacity>
+      </View>
     </View>
   );
 };
 
-const styles = StyleSheet.create({
-  container: {
-    flex: 1,
-    backgroundColor: '#1a1a1a',
+const CARD_BG   = '#141414';
+const BORDER    = 'rgba(255,255,255,0.08)';
+const LABEL_CLR = 'rgba(255,255,255,0.4)';
+
+const st = StyleSheet.create({
+  root: { flex:1, backgroundColor:'#0a0a0a' },
+
+  // Hero
+  hero:      { width, position:'relative' },
+  nav:       { position:'absolute', top:0, left:0, right:0, flexDirection:'row', justifyContent:'space-between', paddingHorizontal:16, zIndex:10 },
+  navBtn:    { width:36, height:36, borderRadius:12, backgroundColor:'rgba(0,0,0,0.45)', alignItems:'center', justifyContent:'center' },
+  heroText:  { position:'absolute', bottom:0, left:0, right:0, padding:20 },
+  heroTitle:   { fontSize:28, fontWeight:'800', color:'#fff', lineHeight:34, marginBottom:8, textTransform:'uppercase' },
+  heroSubRow:  { flexDirection:'row', alignItems:'center', gap:8 },
+  heroSub:     { fontSize:13, color:'rgba(255,255,255,0.55)', fontWeight:'500', flex:1 },
+  greenCheck:  {
+    width:22, height:22, borderRadius:11,
+    backgroundColor:'#22c55e',
+    alignItems:'center', justifyContent:'center',
+    flexShrink:0,
+    ...Platform.select({ ios:{ shadowColor:'#22c55e', shadowOffset:{width:0,height:0}, shadowOpacity:0.6, shadowRadius:6 }, android:{ elevation:4 } }),
   },
-  safeArea: {
-    flex: 1,
+
+  // Info strip
+  infoCard: {
+    flexDirection:'row', marginHorizontal:16, marginTop:16, marginBottom:8,
+    backgroundColor:CARD_BG, borderRadius:16,
+    borderWidth:1, borderColor:BORDER,
+    ...Platform.select({ ios:{ shadowColor:'#000', shadowOffset:{width:0,height:2}, shadowOpacity:0.3, shadowRadius:8 }, android:{ elevation:4 } }),
   },
-  header: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    paddingHorizontal: 20,
-    paddingVertical: 16,
+  infoBlock: { flex:1, paddingVertical:16, paddingHorizontal:14 },
+  infoLabel: { fontSize:9, fontWeight:'700', color:LABEL_CLR, letterSpacing:0.8, textTransform:'uppercase', marginBottom:5 },
+  infoBig:   { fontSize:13, fontWeight:'700', color:'#fff', marginBottom:2 },
+  infoSub:   { fontSize:11, color:LABEL_CLR },
+  infoSep:   { width:1, backgroundColor:BORDER, marginVertical:14 },
+
+  // Sections
+  section:      { paddingHorizontal:16, marginTop:20 },
+  sectionTitle: { fontSize:13, fontWeight:'700', color:'rgba(255,255,255,0.5)', textTransform:'uppercase', letterSpacing:0.8, marginBottom:10 },
+  card: {
+    backgroundColor:CARD_BG, borderRadius:16, padding:16,
+    borderWidth:1, borderColor:BORDER,
   },
-  headerTitle: {
-    fontSize: 18,
-    fontWeight: '600',
-    color: '#FFFFFF',
+
+  // Ticket rows
+  tixRow:       { flexDirection:'row', alignItems:'center', paddingVertical:12 },
+  tixRowBorder: { borderTopWidth:1, borderTopColor:BORDER },
+  tixName:      { fontSize:14, fontWeight:'600', color:'#fff', marginBottom:2 },
+  tixMeta:      { fontSize:12, color:LABEL_CLR },
+  tixPrice:     { fontSize:15, fontWeight:'700', color:'#fff' },
+  tixFooter:    { flexDirection:'row', justifyContent:'space-between', borderTopWidth:1, borderTopColor:BORDER, paddingTop:12, marginTop:4 },
+  tixFooterLabel: { fontSize:13, color:LABEL_CLR },
+  tixFooterVal:   { fontSize:13, fontWeight:'700', color:'#fff' },
+
+  // Code
+  codeHint:  { fontSize:13, color:LABEL_CLR, marginBottom:14, textAlign:'center' },
+  codeWrap:  { backgroundColor:'rgba(255,255,255,0.05)', borderRadius:12, paddingVertical:18, alignItems:'center', borderWidth:1, borderColor:BORDER },
+  code:      { fontSize:30, fontWeight:'800', color:'#fff', letterSpacing:10 },
+
+  // Bottom bar
+  bottomBar: {
+    position:'absolute', bottom:0, left:0, right:0,
+    flexDirection:'row', gap:10, paddingHorizontal:16, paddingTop:14,
+    backgroundColor:'rgba(10,10,10,0.97)',
+    borderTopWidth:1, borderTopColor:BORDER,
   },
-  scrollView: {
-    flex: 1,
-  },
-  contentContainer: {
-    padding: 20,
-    paddingBottom: 40,
-  },
-  successContainer: {
-    alignItems: 'center',
-    marginBottom: 30,
-  },
-  successIcon: {
-    width: 80,
-    height: 80,
-    borderRadius: 40,
-    backgroundColor: 'rgba(76, 175, 80, 0.2)',
-    justifyContent: 'center',
-    alignItems: 'center',
-    marginBottom: 16,
-  },
-  successTitle: {
-    fontSize: 24,
-    fontWeight: '700',
-    color: '#FFFFFF',
-    marginBottom: 8,
-    textAlign: 'center',
-  },
-  successSubtitle: {
-    fontSize: 16,
-    color: 'rgba(255,255,255,0.7)',
-    textAlign: 'center',
-  },
-  eventCard: {
-    borderRadius: 16,
-    overflow: 'hidden',
-    backgroundColor: '#2a2a2a',
-    marginBottom: 24,
-  },
-  eventImage: {
-    width: '100%',
-    height: 200,
-  },
-  imageOverlay: {
-    position: 'absolute',
-    left: 0,
-    right: 0,
-    bottom: 0,
-    height: '100%',
-  },
-  eventContent: {
-    position: 'absolute',
-    bottom: 0,
-    left: 0,
-    right: 0,
-    padding: 16,
-  },
-  eventTitle: {
-    fontSize: 20,
-    fontWeight: '700',
-    color: '#FFFFFF',
-    marginBottom: 12,
-  },
-  eventDetails: {
-    gap: 8,
-  },
-  detailRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 8,
-  },
-  detailText: {
-    fontSize: 14,
-    color: '#FFFFFF',
-    opacity: 0.9,
-  },
-  summaryCard: {
-    backgroundColor: 'rgba(255, 255, 255, 0.1)',
-    borderRadius: 16,
-    padding: 20,
-    marginBottom: 20,
-  },
-  summaryTitle: {
-    fontSize: 18,
-    fontWeight: '600',
-    color: '#FFFFFF',
-    marginBottom: 16,
-  },
-  summaryRow: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    marginBottom: 12,
-  },
-  summaryLabel: {
-    fontSize: 16,
-    color: 'rgba(255, 255, 255, 0.8)',
-  },
-  summaryValue: {
-    fontSize: 16,
-    fontWeight: '600',
-    color: '#FFFFFF',
-  },
-  organizerCard: {
-    backgroundColor: 'rgba(255, 255, 255, 0.1)',
-    borderRadius: 16,
-    padding: 20,
-    marginBottom: 30,
-  },
-  organizerInfo: {
-    flexDirection: 'row',
-    alignItems: 'center',
-  },
-  organizerAvatar: {
-    width: 50,
-    height: 50,
-    borderRadius: 25,
-    marginRight: 16,
-  },
-  avatarPlaceholder: {
-    backgroundColor: 'rgba(255, 255, 255, 0.2)',
-    justifyContent: 'center',
-    alignItems: 'center',
-  },
-  avatarText: {
-    fontSize: 20,
-    fontWeight: '600',
-    color: '#FFFFFF',
-  },
-  organizerDetails: {
-    flex: 1,
-  },
-  organizerName: {
-    fontSize: 18,
-    fontWeight: '600',
-    color: '#FFFFFF',
-    marginBottom: 4,
-  },
-  organizerDescription: {
-    fontSize: 14,
-    color: 'rgba(255, 255, 255, 0.8)',
-  },
-  verificationCard: {
-    backgroundColor: 'rgba(255, 255, 255, 0.1)',
-    borderRadius: 16,
-    padding: 20,
-    marginBottom: 30,
-  },
-  verificationContent: {
-    alignItems: 'center',
-    marginTop: 16,
-  },
-  verificationCode: {
-    fontSize: 32,
-    fontWeight: '700',
-    color: '#4CAF50',
-    letterSpacing: 8,
-    marginBottom: 16,
-  },
-  verificationDescription: {
-    fontSize: 14,
-    color: 'rgba(255, 255, 255, 0.8)',
-    textAlign: 'center',
-    lineHeight: 20,
-  },
-  actionButtons: {
-    flexDirection: 'row',
-    gap: 12,
-    marginBottom: 24,
-  },
-  shareButton: {
-    flex: 1,
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'center',
-    backgroundColor: '#2a2a2a',
-    paddingVertical: 12,
-    borderRadius: 12,
-    gap: 8,
-  },
-  viewButton: {
-    flex: 1,
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'center',
-    backgroundColor: '#FFD700',
-    paddingVertical: 12,
-    borderRadius: 12,
-    gap: 8,
-  },
-  buttonText: {
-    fontSize: 16,
-    fontWeight: '600',
-    color: '#FFFFFF',
-  },
-  returnButton: {
-    paddingVertical: 16,
-    alignItems: 'center',
-  },
-  returnButtonText: {
-    fontSize: 16,
-    color: 'rgba(255,255,255,0.7)',
-  },
+  primaryBtn:  { flex:1, borderRadius:14, overflow:'hidden' },
+  primaryGrad: { height:52, flexDirection:'row', alignItems:'center', justifyContent:'center', gap:8 },
+  primaryBtnTxt: { fontSize:16, fontWeight:'700', color:'#fff' },
 });
 
-export default EventConfirmationScreen; 
+export default EventConfirmationScreen;

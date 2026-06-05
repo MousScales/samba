@@ -7,12 +7,14 @@ import { BlurView } from 'expo-blur';
 import CustomNavBar from '../components/CustomNavBar';
 import { useEvents } from '../context/EventsContext';
 import { formatCount } from '../utils/formatNumbers';
+import { useLanguage } from '../context/LanguageContext';
 
 const { width, height } = Dimensions.get('window');
 
 // Enhanced Animated Ticket Card Component
 const TicketCard = ({ ticket, onPress, index, scrollY, isPast }) => {
   const { theme } = useTheme();
+  const { t, locale } = useLanguage();
   const fadeAnim = useRef(new Animated.Value(0)).current;
   const slideAnim = useRef(new Animated.Value(50)).current;
   const scaleAnim = useRef(new Animated.Value(0.95)).current;
@@ -119,9 +121,9 @@ const TicketCard = ({ ticket, onPress, index, scrollY, isPast }) => {
                     (ticket.status === 'used' || ticket.isScanned) && styles.attendedStatusText
                   ]}>
                     {
-                      ticket.status === 'missed' ? "Missed" :
-                      ticket.status === 'used' || ticket.isScanned ? "Attended" :
-                      isPast ? "Past Event" : "Upcoming"
+                      ticket.status === 'missed' ? t('myTickets.status.missed') :
+                      ticket.status === 'used' || ticket.isScanned ? t('myTickets.status.attended') :
+                      isPast ? t('myTickets.status.pastEvent') : t('myTickets.status.upcoming')
                     }
                   </Text>
                 </View>
@@ -132,7 +134,7 @@ const TicketCard = ({ ticket, onPress, index, scrollY, isPast }) => {
             <View style={styles.priceBadge}>
               <BlurView intensity={60} style={styles.priceBlur}>
                 <Text style={styles.priceText}>
-                  {ticket.isFree ? 'FREE' : `$${ticket.price}`}
+                  {ticket.isFree ? t('createEvent.ticket.free') : `$${ticket.price}`}
                 </Text>
               </BlurView>
             </View>
@@ -194,9 +196,9 @@ const TicketCard = ({ ticket, onPress, index, scrollY, isPast }) => {
                   </LinearGradient>
                 </View>
                 <View style={styles.detailContent}>
-                  <Text style={styles.detailLabel}>Date</Text>
+                  <Text style={styles.detailLabel}>{t('myTickets.label.date')}</Text>
                   <Text style={[styles.detailValue, { color: theme.colors.text }]}>
-                    {new Date(ticket.eventDate).toLocaleDateString('en-US', {
+                    {new Date(ticket.eventDate).toLocaleDateString(locale, {
                       weekday: 'short',
                       month: 'short',
                       day: 'numeric'
@@ -220,7 +222,7 @@ const TicketCard = ({ ticket, onPress, index, scrollY, isPast }) => {
                   </LinearGradient>
                 </View>
                 <View style={styles.detailContent}>
-                  <Text style={styles.detailLabel}>Location</Text>
+                  <Text style={styles.detailLabel}>{t('myTickets.label.location')}</Text>
                   <Text 
                     style={[styles.detailValue, { color: theme.colors.text }]} 
                     numberOfLines={1}
@@ -245,7 +247,7 @@ const TicketCard = ({ ticket, onPress, index, scrollY, isPast }) => {
                   </LinearGradient>
                 </View>
                 <View style={styles.detailContent}>
-                  <Text style={styles.detailLabel}>Type</Text>
+                  <Text style={styles.detailLabel}>{t('myTickets.label.type')}</Text>
                   <Text style={[styles.detailValue, { color: theme.colors.text }]}>
                     {ticket.ticketType}
                   </Text>
@@ -276,6 +278,7 @@ const TicketCard = ({ ticket, onPress, index, scrollY, isPast }) => {
 // Enhanced Empty State Component
 const EmptyState = ({ activeTab, navigation }) => {
   const { theme } = useTheme();
+  const { t } = useLanguage();
   const pulseAnim = useRef(new Animated.Value(1)).current;
   const floatAnim = useRef(new Animated.Value(0)).current;
 
@@ -363,7 +366,7 @@ const EmptyState = ({ activeTab, navigation }) => {
         </Animated.View>
 
         <Text style={[styles.emptyStateTitle, { color: theme.colors.text }]}>
-          {activeTab === 'upcoming' ? 'Ready for Adventure?' : 'Memory Lane'}
+          {activeTab === 'upcoming' ? t('myTickets.empty.upcoming.title') : t('myTickets.empty.past.title')}
         </Text>
 
         <View style={styles.emptyStateDivider}>
@@ -376,10 +379,9 @@ const EmptyState = ({ activeTab, navigation }) => {
         </View>
 
         <Text style={[styles.emptyStateMessage, { color: theme.colors.textSecondary }]}>
-          {activeTab === 'upcoming' 
-            ? 'Your next incredible experience is just a tap away! Discover amazing events happening around you.'
-            : 'Your attended events will create a beautiful timeline of memories here.'
-          }
+          {activeTab === 'upcoming'
+            ? t('myTickets.empty.upcoming.message')
+            : t('myTickets.empty.past.message')}
         </Text>
 
         {activeTab === 'upcoming' && (
@@ -399,7 +401,7 @@ const EmptyState = ({ activeTab, navigation }) => {
                 color="#FFFFFF"
                 style={styles.exploreButtonIcon}
               />
-              <Text style={styles.exploreButtonText}>Explore Events</Text>
+              <Text style={styles.exploreButtonText}>{t('myTickets.empty.exploreButton')}</Text>
             </LinearGradient>
           </TouchableOpacity>
         )}
@@ -407,9 +409,9 @@ const EmptyState = ({ activeTab, navigation }) => {
         {/* Feature Highlights */}
         <View style={styles.featureHighlights}>
           {[
-            { icon: 'calendar', text: 'Browse Events', color: '#4ECDC4' },
-            { icon: 'map-pin', text: 'Find Local', color: '#FF6B6B' },
-            { icon: 'heart', text: 'Save Favorites', color: '#FFD700' }
+            { icon: 'calendar', text: t('myTickets.empty.features.browse'), color: '#4ECDC4' },
+            { icon: 'map-pin', text: t('myTickets.empty.features.findLocal'), color: '#FF6B6B' },
+            { icon: 'heart', text: t('myTickets.empty.features.saveFavorites'), color: '#FFD700' }
           ].map((feature, index) => (
             <View key={index} style={styles.featureItem}>
               <LinearGradient
@@ -432,17 +434,20 @@ const EmptyState = ({ activeTab, navigation }) => {
   );
 };
 
-const MyTicketsScreen = ({ navigation }) => {
+const MyTicketsScreen = ({ navigation, route }) => {
   const { theme } = useTheme();
+  const { t } = useLanguage();
   const { getUserTickets, events, getUserTickets: getAllUserTickets } = useEvents();
-  const [activeTab, setActiveTab] = useState('upcoming');
+  const [activeTab, setActiveTab] = useState(route?.params?.tab || 'all');
   const [upcomingTickets, setUpcomingTickets] = useState([]);
   const [pastTickets, setPastTickets] = useState([]);
   const [loading, setLoading] = useState(true);
   const scrollY = useRef(new Animated.Value(0)).current;
   const headerOpacity = useRef(new Animated.Value(1)).current;
 
-  const currentTickets = activeTab === 'upcoming' ? upcomingTickets : pastTickets;
+  const currentTickets = activeTab === 'all'
+    ? [...upcomingTickets, ...pastTickets]
+    : activeTab === 'upcoming' ? upcomingTickets : pastTickets;
 
   // Helper function to get attendee count for an event
   const getAttendeeCountForEvent = async (eventId) => {
@@ -558,9 +563,9 @@ const MyTicketsScreen = ({ navigation }) => {
           </TouchableOpacity>
           
           <View style={styles.headerCenter}>
-            <Text style={styles.headerTitle}>My Tickets</Text>
+            <Text style={styles.headerTitle}>{t('myTickets.title')}</Text>
             <Text style={styles.headerSubtitle}>
-              {currentTickets.length} {activeTab} ticket{currentTickets.length !== 1 ? 's' : ''}
+              {t('myTickets.subtitle', { count: currentTickets.length, tab: t(`myTickets.tab.${activeTab}`) })}
             </Text>
           </View>
           
@@ -571,7 +576,10 @@ const MyTicketsScreen = ({ navigation }) => {
         <View style={styles.tabSection}>
           <BlurView intensity={40} style={styles.tabContainer}>
             <View style={styles.tabContent}>
-              {['upcoming', 'past'].map((tab) => (
+              {['all', 'upcoming', 'past'].map((tab) => {
+                const iconName = tab === 'all' ? 'layers' : tab === 'upcoming' ? 'calendar' : 'clock';
+                const label = t(`myTickets.tab.${tab}`);
+                return (
                 <TouchableOpacity
                   key={tab}
                   style={[styles.tab, activeTab === tab && styles.activeTab]}
@@ -585,7 +593,7 @@ const MyTicketsScreen = ({ navigation }) => {
                     />
                   )}
                   <Icon
-                    name={tab === 'upcoming' ? 'calendar' : 'clock'}
+                    name={iconName}
                     type="feather"
                     size={18}
                     color={activeTab === tab ? '#FFD700' : 'rgba(255,255,255,0.6)'}
@@ -595,13 +603,14 @@ const MyTicketsScreen = ({ navigation }) => {
                     styles.tabText,
                     { color: activeTab === tab ? '#FFD700' : 'rgba(255,255,255,0.6)' }
                   ]}>
-                    {tab.charAt(0).toUpperCase() + tab.slice(1)}
+                    {label}
                   </Text>
                   {activeTab === tab && (
                     <View style={styles.tabIndicator} />
                   )}
                 </TouchableOpacity>
-              ))}
+                );
+              })}
             </View>
           </BlurView>
         </View>
@@ -622,7 +631,7 @@ const MyTicketsScreen = ({ navigation }) => {
                 ticket={ticket}
                 index={index}
                 scrollY={scrollY}
-                isPast={activeTab === 'past'}
+                isPast={activeTab === 'past' || (activeTab === 'all' && pastTickets.some(p => p.id === ticket.id))}
                 onPress={() => navigation.navigate('TicketDetails', { ticket })}
               />
             ))
@@ -889,6 +898,7 @@ const styles = StyleSheet.create({
     flex: 1,
     marginRight: 16,
     lineHeight: 28,
+    textTransform: 'uppercase',
   },
   chevronContainer: {
     width: 32,

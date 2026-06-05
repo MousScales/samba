@@ -14,18 +14,18 @@ import {
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { LinearGradient } from 'expo-linear-gradient';
 import { Icon, useTheme } from '@rneui/themed';
-import { Video } from 'expo-av';
 import { useEvents } from '../context/EventsContext';
+import { useAuth } from '../context/AuthContext';
+import { useLanguage } from '../context/LanguageContext';
 
 const VerificationCodeScreen = ({ route, navigation }) => {
-  const { event } = route.params || {}; // Make event optional
+  const { event } = route.params || {};
   const { theme } = useTheme();
-  const { events } = useEvents(); // Get events from context
+  const { events, registerEventScanner } = useEvents();
+  const { user } = useAuth();
+  const { t } = useLanguage();
   const [code, setCode] = useState('');
-  const [videoLoaded, setVideoLoaded] = useState(false);
-  const [videoError, setVideoError] = useState(false);
   
-  // Animation values
   const fadeAnim = useRef(new Animated.Value(0)).current;
   const slideAnim = useRef(new Animated.Value(30)).current;
   const titleFadeAnim = useRef(new Animated.Value(0)).current;
@@ -33,20 +33,13 @@ const VerificationCodeScreen = ({ route, navigation }) => {
   const backButtonAnim = useRef(new Animated.Value(0)).current;
   const codeBoxesAnim = useRef(new Animated.Value(0)).current;
   
-  // Video reference
-  const videoRef = useRef(null);
-  
   useEffect(() => {
-    // Start animations when component mounts
     Animated.sequence([
-      // First animate the background fade in
       Animated.timing(fadeAnim, {
         toValue: 1,
         duration: 500,
         useNativeDriver: true,
       }),
-      
-      // Then animate title and back button together
       Animated.parallel([
         Animated.timing(titleFadeAnim, {
           toValue: 1,
@@ -64,8 +57,6 @@ const VerificationCodeScreen = ({ route, navigation }) => {
           useNativeDriver: true,
         }),
       ]),
-      
-      // Finally animate the code input boxes with bounce effect
       Animated.spring(codeBoxesAnim, {
         toValue: 1,
         friction: 6,
@@ -73,75 +64,49 @@ const VerificationCodeScreen = ({ route, navigation }) => {
         useNativeDriver: true,
       }),
     ]).start();
-    
-    // Load and play video in background
-    loadVideo();
   }, []);
   
-  const loadVideo = async () => {
-    try {
-      if (videoRef.current) {
-        await videoRef.current.loadAsync(require('../assets/videos/homebackground.mov'), {}, false)
-          .then(status => {
-            if (status.isLoaded) {
-              setVideoLoaded(true);
-              videoRef.current.playAsync();
-              videoRef.current.setIsLoopingAsync(true);
-              videoRef.current.setVolumeAsync(0);
-            } else {
-              setVideoError(true);
-            }
-          })
-          .catch(() => {
-            setVideoError(true);
-          });
-      }
-    } catch (error) {
-      console.log("Video loading error:", error);
-      setVideoError(true);
-    }
+  const goToScanner = async (targetEvent) => {
+    await registerEventScanner(targetEvent.id, {
+      id: user?.id,
+      name: user?.name || user?.email?.split('@')[0] || 'Scanner',
+      email: user?.email,
+      profilePicture: user?.profilePicture,
+    });
+    navigation.navigate('TicketScanner', { event: targetEvent });
   };
-  
+
   const handleContinue = () => {
     if (event) {
-      // If we have a specific event, verify against its code
       if (code === event.verificationCode) {
-        navigation.navigate('TicketScanner', { event });
+        goToScanner(event);
       } else {
         Alert.alert(
-          'Invalid Code',
-          'The verification code you entered is incorrect. Please check the code and try again.',
-          [{ text: 'OK', onPress: () => setCode('') }]
+          t('scannerVerification.alert.invalidTitle'),
+          t('scannerVerification.alert.incorrectMessage'),
+          [{ text: t('common.ok'), onPress: () => setCode('') }]
         );
       }
     } else {
-      // If no specific event, search all events for matching verification code
       const matchingEvent = events.find(e => e.verificationCode === code);
       
       if (matchingEvent) {
-        // Found an event with matching verification code
-        navigation.navigate('TicketScanner', { 
-          event: matchingEvent,
-          eventId: matchingEvent.id 
-        });
+        goToScanner(matchingEvent);
       } else {
-        // No event found with this verification code
         Alert.alert(
-          'Invalid Code',
-          'No event found with this verification code. Please check the code and try again.',
-          [{ text: 'OK', onPress: () => setCode('') }]
+          t('scannerVerification.alert.invalidTitle'),
+          t('scannerVerification.alert.noEventMessage'),
+          [{ text: t('common.ok'), onPress: () => setCode('') }]
         );
       }
     }
   };
   
   const handleBackPress = () => {
-    // Clear any keyboard and navigate back
     Keyboard.dismiss();
     navigation.goBack();
   };
   
-  // Auto-verify when 6 digits are entered
   useEffect(() => {
     if (code.length === 6) {
       handleContinue();
@@ -150,28 +115,13 @@ const VerificationCodeScreen = ({ route, navigation }) => {
   
   return (
     <SafeAreaView style={styles.container}>
-      {/* Background */}
-      {!videoError ? (
-        <Video
-          ref={videoRef}
-          style={styles.backgroundVideo}
-          resizeMode="cover"
-          shouldPlay={false}
-          isLooping={true}
-          isMuted={true}
-          onError={() => setVideoError(true)}
-        />
-      ) : (
-        <LinearGradient
-          colors={['#0c162d', '#1a2a4a', '#0c162d']}
-          style={styles.backgroundGradient}
-        />
-      )}
+      <LinearGradient
+        colors={['#0c162d', '#1a2a4a', '#0c162d']}
+        style={styles.backgroundGradient}
+      />
       
-      {/* Dark overlay */}
       <View style={styles.overlay} />
       
-      {/* Header with back button and title */}
       <Animated.View 
         style={[
           styles.header,
@@ -190,7 +140,6 @@ const VerificationCodeScreen = ({ route, navigation }) => {
         </TouchableOpacity>
       </Animated.View>
       
-      {/* Centered Title Section */}
       <Animated.View 
         style={[
           styles.titleSection,
@@ -200,11 +149,10 @@ const VerificationCodeScreen = ({ route, navigation }) => {
           }
         ]}
       >
-        <Text style={styles.appTitle}>Scanner Verification</Text>
-        <Text style={styles.subtitle}>Enter the event's verification code to continue</Text>
+        <Text style={styles.appTitle}>{t('scannerVerification.title')}</Text>
+        <Text style={styles.subtitle}>{t('scannerVerification.subtitle')}</Text>
       </Animated.View>
       
-      {/* Centered Form */}
       <KeyboardAvoidingView
         behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
         style={styles.content}
@@ -265,13 +213,6 @@ const styles = StyleSheet.create({
   container: {
     flex: 1,
   },
-  backgroundVideo: {
-    position: 'absolute',
-    top: 0,
-    left: 0,
-    bottom: 0,
-    right: 0,
-  },
   backgroundGradient: {
     position: 'absolute',
     top: 0,
@@ -281,7 +222,7 @@ const styles = StyleSheet.create({
   },
   overlay: {
     ...StyleSheet.absoluteFillObject,
-    backgroundColor: 'rgba(0, 0, 0, 0.85)', // Much darker overlay
+    backgroundColor: 'rgba(0, 0, 0, 0.85)',
   },
   backButton: {
     width: 44,
@@ -397,4 +338,4 @@ const styles = StyleSheet.create({
   },
 });
 
-export default VerificationCodeScreen; 
+export default VerificationCodeScreen;

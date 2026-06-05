@@ -71,8 +71,10 @@ const ProviderDashboardScreen = ({ navigation }) => {
       
       if (result.success && result.onboardingUrl) {
         Linking.openURL(result.onboardingUrl);
+      } else if (result.message) {
+        Alert.alert('Demo Mode', result.message);
       } else {
-        Alert.alert('Error', 'Failed to create onboarding link');
+        Alert.alert('Demo Mode', 'Payment setup is simulated in this build.');
       }
     } catch (error) {
       console.error('Error creating onboarding link:', error);

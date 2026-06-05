@@ -8,20 +8,26 @@ import {
   Platform,
   Animated,
   KeyboardAvoidingView,
+  Keyboard,
+  ScrollView,
+  Pressable,
   Alert,
   ActivityIndicator,
 } from 'react-native';
 import { Text, Icon, useTheme } from '@rneui/themed';
-import { SafeAreaView } from 'react-native-safe-area-context';
-import { Video } from 'expo-av';
+import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 import { LinearGradient } from 'expo-linear-gradient';
 import { useAuth } from '../context/AuthContext';
+import { useLanguage } from '../context/LanguageContext';
+import { isValidEmailFormat } from '../utils/validateEmail';
 
 const { width, height } = Dimensions.get('window');
 
 const LoginScreen = ({ navigation }) => {
   const { theme } = useTheme();
   const { login, checkEmail } = useAuth();
+  const { t } = useLanguage();
+  const insets = useSafeAreaInsets();
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [showPassword, setShowPassword] = useState(false);
@@ -31,16 +37,10 @@ const LoginScreen = ({ navigation }) => {
   const [showPasswordField, setShowPasswordField] = useState(false);
   const [emailChecked, setEmailChecked] = useState(false);
   
-  const [videoLoaded, setVideoLoaded] = useState(false);
-  const [videoError, setVideoError] = useState(false);
-  
   // Animation values
   const fadeAnim = useRef(new Animated.Value(0)).current;
   const slideAnim = useRef(new Animated.Value(30)).current;
   const passwordFieldAnim = useRef(new Animated.Value(0)).current;
-  
-  // Video reference
-  const videoRef = useRef(null);
   
   // Debounce timer for email checking
   const emailCheckTimeoutRef = useRef(null);
@@ -59,9 +59,6 @@ const LoginScreen = ({ navigation }) => {
         useNativeDriver: true,
       }),
     ]).start();
-    
-    // Load and play video in background
-    loadVideo();
   }, []);
 
   useEffect(() => {
@@ -86,12 +83,10 @@ const LoginScreen = ({ navigation }) => {
       return;
     }
 
-    // Check if email format is valid
-    if (email.includes('@') && email.includes('.')) {
-      // Set timeout for debounced email check
+    if (isValidEmailFormat(email)) {
       emailCheckTimeoutRef.current = setTimeout(() => {
         handleEmailCheck();
-      }, 2000); // Wait 2 seconds after user stops typing
+      }, 2000);
     }
 
     // Cleanup timeout on unmount or email change
@@ -102,32 +97,8 @@ const LoginScreen = ({ navigation }) => {
     };
   }, [email, emailChecked]);
   
-  const loadVideo = async () => {
-    try {
-      if (videoRef.current) {
-        await videoRef.current.loadAsync(require('../assets/videos/homebackground.mov'), {}, false)
-          .then(status => {
-            if (status.isLoaded) {
-              setVideoLoaded(true);
-              videoRef.current.playAsync();
-              videoRef.current.setIsLoopingAsync(true);
-              videoRef.current.setVolumeAsync(0);
-            } else {
-              setVideoError(true);
-            }
-          })
-          .catch(() => {
-            setVideoError(true);
-          });
-      }
-    } catch (error) {
-      console.log("Video loading error:", error);
-      setVideoError(true);
-    }
-  };
-  
   const handleEmailCheck = async () => {
-    if (!email.trim() || !email.includes('@')) {
+    if (!isValidEmailFormat(email)) {
       return;
     }
 
@@ -146,11 +117,11 @@ const LoginScreen = ({ navigation }) => {
         } else {
           // Email doesn't exist, redirect to registration
           Alert.alert(
-            'Create Account',
-            'This email isn\'t registered yet. Would you like to create a new account?',
+            t('login.alert.createAccount.title'),
+            t('login.alert.createAccount.message'),
             [
               {
-                text: 'Cancel',
+                text: t('common.cancel'),
                 style: 'cancel',
                 onPress: () => {
                   setEmailChecked(false);
@@ -158,18 +129,18 @@ const LoginScreen = ({ navigation }) => {
                 }
               },
               {
-                text: 'Sign Up',
+                text: t('login.alert.createAccount.signUp'),
                 onPress: () => navigation.navigate('Register', { email: email.trim() }),
               },
             ]
           );
         }
       } else {
-        Alert.alert('Error', result.message || 'Failed to verify email');
+        Alert.alert(t('common.error'), result.message || t('login.error.verifyEmail'));
       }
     } catch (error) {
       console.error('Email check error:', error);
-      Alert.alert('Error', 'Something went wrong. Please try again.');
+      Alert.alert(t('common.error'), t('common.errorGeneric'));
     } finally {
       setIsCheckingEmail(false);
     }
@@ -177,7 +148,7 @@ const LoginScreen = ({ navigation }) => {
 
   const handleLogin = async () => {
     if (!password) {
-      Alert.alert('Error', 'Please enter your password');
+      Alert.alert(t('common.error'), t('login.error.passwordRequired'));
       return;
     }
 
@@ -194,11 +165,11 @@ const LoginScreen = ({ navigation }) => {
     });
       } else {
         // Show error
-        Alert.alert('Login Failed', result.message);
+        Alert.alert(t('login.alert.loginFailed.title'), result.message);
       }
     } catch (error) {
       console.error('Login error:', error);
-      Alert.alert('Error', 'Something went wrong. Please try again.');
+      Alert.alert(t('common.error'), t('common.errorGeneric'));
     } finally {
       setIsLoading(false);
     }
@@ -230,167 +201,144 @@ const LoginScreen = ({ navigation }) => {
   };
 
   const handleSignUp = () => {
-    navigation.navigate('Register', { email: email.trim() });
+    if (!isValidEmailFormat(email)) {
+      Alert.alert(t('common.invalidEmail.title'), t('common.invalidEmail.message'));
+      return;
+    }
+    navigation.navigate('Register', { email: email.trim().toLowerCase() });
   };
   
   return (
     <SafeAreaView style={styles.container}>
-      {/* Background */}
-      {!videoError ? (
-        <Video
-          ref={videoRef}
-          style={styles.backgroundVideo}
-          resizeMode="cover"
-          shouldPlay={false}
-          isLooping={true}
-          isMuted={true}
-          onError={() => setVideoError(true)}
-        />
-      ) : (
-        <LinearGradient
-          colors={['#0c162d', '#1a2a4a', '#0c162d']}
-          style={styles.backgroundGradient}
-        />
-      )}
+      <LinearGradient
+        colors={['#0c162d', '#1a2a4a', '#0c162d']}
+        style={styles.backgroundGradient}
+      />
       
       <View style={styles.overlay} />
       
       <KeyboardAvoidingView
         style={styles.keyboardView}
-        behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
+        behavior={Platform.OS === 'ios' ? 'padding' : undefined}
+        keyboardVerticalOffset={Platform.OS === 'ios' ? insets.top : 0}
       >
-        {/* Header */}
-        <Animated.View 
-          style={[
-            styles.header,
-            {
-              opacity: fadeAnim,
-              transform: [{ translateY: slideAnim }]
-            }
-          ]}
+        <ScrollView
+          style={styles.scrollView}
+          contentContainerStyle={styles.scrollContent}
+          keyboardShouldPersistTaps="handled"
+          keyboardDismissMode="on-drag"
+          showsVerticalScrollIndicator={false}
+          bounces={false}
         >
-          <Text style={styles.title}>Samba</Text>
-          <Text style={styles.subtitle}></Text>
-        </Animated.View>
-        
-        {/* Login Form */}
-        <Animated.View 
-          style={[
-            styles.formContainer,
-            {
-              opacity: fadeAnim,
-              transform: [{ translateY: slideAnim }]
-            }
-          ]}
-        >
-          <View style={styles.form}>
-            <Text style={styles.formTitle}>Login or Sign Up</Text>
-          
-            {/* Email Input */}
-            <View style={[styles.inputContainer, emailChecked && styles.inputChecked]}>
-              <TextInput
-                style={[styles.input, emailChecked && styles.inputDisabled]}
-                placeholder="Email address"
-                placeholderTextColor="rgba(255,255,255,0.5)"
-                value={email}
-                onChangeText={handleEmailChange}
-                keyboardType="email-address"
-                autoCapitalize="none"
-                autoCorrect={false}
-                editable={!emailChecked}
-              />
-              {isCheckingEmail && (
-                <ActivityIndicator 
-                  size="small" 
-                  color="#FFFFFF" 
-                  style={styles.loadingIndicator}
-                />
-              )}
-              {emailChecked && (
-                <TouchableOpacity
-                  style={styles.editButton}
-                  onPress={handleBackToEmail}
-                >
-                  <Icon
-                    name="edit-2"
-                    type="feather"
-                    size={18}
-                    color="#FFFFFF"
-                  />
-                </TouchableOpacity>
-              )}
-            </View>
-            
-            {/* Password Input - Animated */}
-            {showPasswordField && (
-              <Animated.View 
-                style={[
-                  styles.inputContainer,
-                  {
-                    opacity: passwordFieldAnim,
-                    transform: [{
-                      translateY: passwordFieldAnim.interpolate({
-                        inputRange: [0, 1],
-                        outputRange: [-20, 0],
-                      })
-                    }]
-                  }
-                ]}
-              >
-            <TextInput
-                  style={[styles.input, { paddingRight: 50 }]}
-                  placeholder="Password"
-              placeholderTextColor="rgba(255,255,255,0.5)"
-                  value={password}
-                  onChangeText={setPassword}
-                  secureTextEntry={!showPassword}
-                  autoCapitalize="none"
-                  autoCorrect={false}
-                  onSubmitEditing={handleLogin}
-                />
-                <TouchableOpacity
-                  style={styles.eyeButton}
-                  onPress={() => setShowPassword(!showPassword)}
-                >
-                  <Icon
-                    name={showPassword ? "eye-off" : "eye"}
-                    type="feather"
-                    size={20}
-                    color="rgba(255,255,255,0.7)"
-            />
-                </TouchableOpacity>
-              </Animated.View>
-            )}
-            
-            {/* Sign In Button - Only show when password field is visible */}
-            {showPasswordField && (
-          <TouchableOpacity
-                style={styles.actionButton}
-                onPress={handleLogin}
-                disabled={isLoading}
-          >
-                <View style={styles.actionGradient}>
-                  <Text style={styles.actionButtonText}>
-                    {isLoading ? 'Signing In...' : 'Sign In'}
-                  </Text>
-                </View>
-          </TouchableOpacity>
-            )}
-          </View>
-        </Animated.View>
+          <Pressable onPress={Keyboard.dismiss} style={styles.pressableFill}>
+            <Animated.View
+              style={[
+                styles.header,
+                { opacity: fadeAnim, transform: [{ translateY: slideAnim }] },
+              ]}
+            >
+              <Text style={styles.title}>{t('brand.name')}</Text>
+            </Animated.View>
 
-        {/* Floating QR Code Button */}
-      <TouchableOpacity 
-          style={styles.qrFloatingButton}
-        onPress={handleQRScan}
-      >
-          <Icon
-            name="qr-code-scanner"
-            type="material"
-            size={28}
-            color="#FFFFFF"
-          />
-      </TouchableOpacity>
+            <Animated.View
+              style={[
+                styles.formContainer,
+                { opacity: fadeAnim, transform: [{ translateY: slideAnim }] },
+              ]}
+            >
+              <View style={styles.form}>
+                <Text style={styles.formTitle}>{t('login.title')}</Text>
+
+                <View style={[styles.inputContainer, emailChecked && styles.inputChecked]}>
+                  <TextInput
+                    style={[styles.input, emailChecked && styles.inputDisabled]}
+                    placeholder={t('login.placeholder.email')}
+                    placeholderTextColor="rgba(255,255,255,0.5)"
+                    value={email}
+                    onChangeText={handleEmailChange}
+                    keyboardType="email-address"
+                    autoCapitalize="none"
+                    autoCorrect={false}
+                    editable={!emailChecked}
+                  />
+                  {isCheckingEmail && (
+                    <ActivityIndicator
+                      size="small"
+                      color="#FFFFFF"
+                      style={styles.loadingIndicator}
+                    />
+                  )}
+                  {emailChecked && (
+                    <TouchableOpacity style={styles.editButton} onPress={handleBackToEmail}>
+                      <Icon name="edit-2" type="feather" size={18} color="#FFFFFF" />
+                    </TouchableOpacity>
+                  )}
+                </View>
+
+                {showPasswordField && (
+                  <Animated.View
+                    style={[
+                      styles.inputContainer,
+                      {
+                        opacity: passwordFieldAnim,
+                        transform: [{
+                          translateY: passwordFieldAnim.interpolate({
+                            inputRange: [0, 1],
+                            outputRange: [-20, 0],
+                          }),
+                        }],
+                      },
+                    ]}
+                  >
+                    <TextInput
+                      style={[styles.input, { paddingRight: 50 }]}
+                      placeholder={t('login.placeholder.password')}
+                      placeholderTextColor="rgba(255,255,255,0.5)"
+                      value={password}
+                      onChangeText={setPassword}
+                      secureTextEntry={!showPassword}
+                      autoCapitalize="none"
+                      autoCorrect={false}
+                      onSubmitEditing={handleLogin}
+                    />
+                    <TouchableOpacity
+                      style={styles.eyeButton}
+                      onPress={() => setShowPassword(!showPassword)}
+                    >
+                      <Icon
+                        name={showPassword ? 'eye-off' : 'eye'}
+                        type="feather"
+                        size={20}
+                        color="rgba(255,255,255,0.7)"
+                      />
+                    </TouchableOpacity>
+                  </Animated.View>
+                )}
+
+                {showPasswordField && (
+                  <TouchableOpacity
+                    style={styles.actionButton}
+                    onPress={handleLogin}
+                    disabled={isLoading}
+                  >
+                    <View style={styles.actionGradient}>
+                      <Text style={styles.actionButtonText}>
+                        {isLoading ? t('login.button.signingIn') : t('login.button.signIn')}
+                      </Text>
+                    </View>
+                  </TouchableOpacity>
+                )}
+              </View>
+            </Animated.View>
+          </Pressable>
+        </ScrollView>
+
+        <TouchableOpacity
+          style={[styles.qrFloatingButton, { bottom: Math.max(insets.bottom + 16, 30) }]}
+          onPress={handleQRScan}
+        >
+          <Icon name="qr-code-scanner" type="material" size={28} color="#FFFFFF" />
+        </TouchableOpacity>
       </KeyboardAvoidingView>
     </SafeAreaView>
   );
@@ -399,13 +347,6 @@ const LoginScreen = ({ navigation }) => {
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-  },
-  backgroundVideo: {
-    position: 'absolute',
-    top: 0,
-    left: 0,
-    bottom: 0,
-    right: 0,
   },
   backgroundGradient: {
     position: 'absolute',
@@ -420,6 +361,16 @@ const styles = StyleSheet.create({
   },
   keyboardView: {
     flex: 1,
+  },
+  scrollView: {
+    flex: 1,
+  },
+  scrollContent: {
+    flexGrow: 1,
+    paddingBottom: 100,
+  },
+  pressableFill: {
+    flexGrow: 1,
   },
   header: {
     alignItems: 'center',
@@ -443,10 +394,8 @@ const styles = StyleSheet.create({
     marginTop: 8,
   },
   formContainer: {
-    flex: 1,
-    justifyContent: 'flex-start',
     paddingHorizontal: 24,
-    paddingTop: 80,
+    paddingTop: 40,
   },
   form: {
     width: '100%',
@@ -526,7 +475,6 @@ const styles = StyleSheet.create({
   },
   qrFloatingButton: {
     position: 'absolute',
-    bottom: Platform.OS === 'ios' ? 50 : 30,
     right: 24,
     width: 60,
     height: 60,

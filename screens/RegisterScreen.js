@@ -4,246 +4,196 @@ import {
   View,
   TextInput,
   TouchableOpacity,
-  Dimensions,
   Platform,
   Animated,
   KeyboardAvoidingView,
+  Keyboard,
+  ScrollView,
+  Pressable,
   Alert,
   Image,
-  ScrollView,
   Modal,
+  ActivityIndicator,
 } from 'react-native';
-import { Text, Icon, useTheme, Button } from '@rneui/themed';
-import { SafeAreaView } from 'react-native-safe-area-context';
+import { Text, Icon } from '@rneui/themed';
+import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 import { LinearGradient } from 'expo-linear-gradient';
-import * as ImagePicker from 'expo-image-picker';
 import DateTimePicker from '@react-native-community/datetimepicker';
 import { useAuth } from '../context/AuthContext';
+import { useLanguage } from '../context/LanguageContext';
+import { isValidEmailFormat } from '../utils/validateEmail';
+import { pickImageFromLibrary } from '../utils/pickImage';
 
-const { width, height } = Dimensions.get('window');
+const TOTAL_STEPS = 10;
 
-const StepIndicator = ({ currentStep, totalSteps, theme }) => {
-  return (
-    <View style={styles.stepIndicator}>
-      {Array.from({ length: totalSteps }, (_, i) => (
-        <React.Fragment key={i}>
-          <View
-            style={[
-              styles.stepCircle,
-              {
-                backgroundColor: i < currentStep ? '#FFFFFF' : 'rgba(255,255,255,0.1)',
-                borderColor: i === currentStep - 1 ? '#FFFFFF' : 'rgba(255,255,255,0.2)',
-                borderWidth: i === currentStep - 1 ? 2 : 1,
-              }
-            ]}
-          >
-            {i < currentStep - 1 ? (
-              <Icon name="check" type="feather" size={14} color="#1A1A1A" />
-            ) : (
-              <Text style={[styles.stepNumber, { 
-                color: i === currentStep - 1 ? '#1A1A1A' : 'rgba(255,255,255,0.7)',
-                fontWeight: i === currentStep - 1 ? '700' : '500'
-              }]}>
-                {i + 1}
-              </Text>
-            )}
-          </View>
-          {i < totalSteps - 1 && (
-            <View style={[styles.stepLine, {
-              backgroundColor: i < currentStep - 1 ? '#FFFFFF' : 'rgba(255,255,255,0.2)'
-            }]} />
-          )}
-        </React.Fragment>
-      ))}
-    </View>
-  );
+const STEP_PROMPT_KEYS = {
+  1: 'register.prompt.firstName',
+  2: 'register.prompt.lastName',
+  3: 'register.prompt.profilePhoto',
+  4: 'register.prompt.email',
+  5: 'register.prompt.phoneNumber',
+  6: 'register.prompt.dateOfBirth',
+  7: 'register.prompt.city',
+  8: 'register.prompt.state',
+  9: 'register.prompt.password',
+  10: 'register.prompt.confirmPassword',
 };
 
+const SimpleStepDots = ({ current, total }) => (
+  <View style={styles.dotsRow}>
+    {Array.from({ length: total }, (_, i) => (
+      <View
+        key={i}
+        style={[
+          styles.dot,
+          i + 1 <= current ? styles.dotActive : styles.dotInactive,
+        ]}
+      />
+    ))}
+  </View>
+);
+
 const RegisterScreen = ({ navigation, route }) => {
-  const { theme } = useTheme();
   const { register } = useAuth();
-  
-  // Get email from navigation params
+  const { t } = useLanguage();
+  const insets = useSafeAreaInsets();
   const prefilledEmail = route.params?.email || '';
-  
-  // Step management
+
   const [currentStep, setCurrentStep] = useState(1);
-  const totalSteps = 4;
-  
-  // Step 1: Profile Picture & Basic Info
+  const [keyboardVisible, setKeyboardVisible] = useState(false);
   const [profilePicture, setProfilePicture] = useState(null);
   const [firstName, setFirstName] = useState('');
   const [lastName, setLastName] = useState('');
-  
-  // Step 2: Contact Information
   const [email, setEmail] = useState(prefilledEmail);
   const [phoneNumber, setPhoneNumber] = useState('');
-  const [dateOfBirth, setDateOfBirth] = useState(new Date(2000, 0, 1)); // Default to Jan 1, 2000
+  const [dateOfBirth, setDateOfBirth] = useState(new Date(2000, 0, 1));
   const [showDatePicker, setShowDatePicker] = useState(false);
-  
-  // Step 3: Location Information (simplified)
   const [city, setCity] = useState('');
   const [state, setState] = useState('');
-  
-  // Step 4: Account Security
   const [password, setPassword] = useState('');
   const [confirmPassword, setConfirmPassword] = useState('');
   const [showPassword, setShowPassword] = useState(false);
   const [showConfirmPassword, setShowConfirmPassword] = useState(false);
-  
   const [isLoading, setIsLoading] = useState(false);
-  
-  // Animation values
+
   const fadeAnim = useRef(new Animated.Value(0)).current;
-  const slideAnim = useRef(new Animated.Value(30)).current;
-  
+  const slideAnim = useRef(new Animated.Value(24)).current;
+  const scrollRef = useRef(null);
+
   useEffect(() => {
-    // Start animations when component mounts
+    fadeAnim.setValue(0);
+    slideAnim.setValue(24);
     Animated.parallel([
-      Animated.timing(fadeAnim, {
-        toValue: 1,
-        duration: 600,
-        useNativeDriver: true,
-      }),
-      Animated.timing(slideAnim, {
-        toValue: 0,
-        duration: 600,
-        useNativeDriver: true,
-      }),
+      Animated.timing(fadeAnim, { toValue: 1, duration: 400, useNativeDriver: true }),
+      Animated.timing(slideAnim, { toValue: 0, duration: 400, useNativeDriver: true }),
+    ]).start();
+  }, [currentStep]);
+
+  useEffect(() => {
+    Animated.parallel([
+      Animated.timing(fadeAnim, { toValue: 1, duration: 600, useNativeDriver: true }),
+      Animated.timing(slideAnim, { toValue: 0, duration: 600, useNativeDriver: true }),
     ]).start();
   }, []);
 
-  const pickImage = async () => {
-    const { status } = await ImagePicker.requestMediaLibraryPermissionsAsync();
-    
-    if (status !== 'granted') {
-      Alert.alert('Permission Required', 'Sorry, we need camera roll permissions to upload a profile picture.');
-      return;
-    }
-
-    const result = await ImagePicker.launchImageLibraryAsync({
-      mediaTypes: ImagePicker.MediaTypeOptions.Images,
-      allowsEditing: true,
-      aspect: [1, 1],
-      quality: 0.8,
+  useEffect(() => {
+    const showEvent = Platform.OS === 'ios' ? 'keyboardWillShow' : 'keyboardDidShow';
+    const hideEvent = Platform.OS === 'ios' ? 'keyboardWillHide' : 'keyboardDidHide';
+    const showSub = Keyboard.addListener(showEvent, () => {
+      setKeyboardVisible(true);
+      setTimeout(() => scrollRef.current?.scrollToEnd({ animated: true }), 100);
     });
+    const hideSub = Keyboard.addListener(hideEvent, () => setKeyboardVisible(false));
+    return () => {
+      showSub.remove();
+      hideSub.remove();
+    };
+  }, []);
 
-    if (!result.canceled) {
-      setProfilePicture(result.assets[0].uri);
-    }
-  };
-
-  // Function to calculate age from date of birth
   const calculateAge = (birthDate) => {
     const today = new Date();
     const birth = new Date(birthDate);
     let age = today.getFullYear() - birth.getFullYear();
     const monthDiff = today.getMonth() - birth.getMonth();
-    
-    if (monthDiff < 0 || (monthDiff === 0 && today.getDate() < birth.getDate())) {
-      age--;
-    }
-    
+    if (monthDiff < 0 || (monthDiff === 0 && today.getDate() < birth.getDate())) age--;
     return age;
   };
 
-  // Format date for display
-  const formatDate = (date) => {
-    return date.toLocaleDateString('en-US', {
-      month: '2-digit',
-      day: '2-digit',
-      year: 'numeric'
-    });
+  const formatDate = (date) =>
+    date.toLocaleDateString('en-US', { month: '2-digit', day: '2-digit', year: 'numeric' });
+
+  const handleDateChange = (event, selectedDate) => {
+    if (Platform.OS === 'android') setShowDatePicker(false);
+    if (selectedDate) setDateOfBirth(selectedDate);
   };
 
-  // Handle date picker change
-  const handleDateChange = (event, selectedDate) => {
-    if (Platform.OS === 'android') {
-      setShowDatePicker(false);
-    }
-    
-    if (selectedDate) {
-      setDateOfBirth(selectedDate);
-    }
+  const pickImage = async () => {
+    const uri = await pickImageFromLibrary();
+    if (uri) setProfilePicture(uri);
   };
 
   const validateCurrentStep = () => {
     switch (currentStep) {
       case 1:
         if (!firstName.trim()) {
-          Alert.alert('Required Field', 'Please enter your first name');
-          return false;
-        }
-        if (!lastName.trim()) {
-          Alert.alert('Required Field', 'Please enter your last name');
+          Alert.alert(t('common.required.title'), t('register.error.firstNameRequired'));
           return false;
         }
         return true;
-      
       case 2:
-        if (!email.trim()) {
-          Alert.alert('Required Field', 'Please enter your email address');
+        if (!lastName.trim()) {
+          Alert.alert(t('common.required.title'), t('register.error.lastNameRequired'));
           return false;
         }
-        if (!email.includes('@') || !email.includes('.')) {
-          Alert.alert('Invalid Email', 'Please enter a valid email address');
-          return false;
-        }
-        if (!phoneNumber.trim()) {
-          Alert.alert('Required Field', 'Please enter your phone number');
-          return false;
-        }
-        if (!dateOfBirth) {
-          Alert.alert('Required Field', 'Please select your date of birth');
-          return false;
-        }
-        
-        const age = calculateAge(dateOfBirth);
-        if (age < 18) {
-          Alert.alert('Age Requirement', 'You must be at least 18 years old to create an account');
-          return false;
-        }
-        
         return true;
-      
       case 3:
-        if (!city.trim()) {
-          Alert.alert('Required Field', 'Please enter your city');
-          return false;
-        }
-        if (!state.trim()) {
-          Alert.alert('Required Field', 'Please enter your state');
-          return false;
-        }
         return true;
-      
       case 4:
-        if (!password.trim()) {
-          Alert.alert('Required Field', 'Please enter a password');
-          return false;
-        }
-        if (password.length < 8) {
-          Alert.alert('Password Too Short', 'Password must be at least 8 characters long');
-          return false;
-        }
-        if (!/[A-Z]/.test(password)) {
-          Alert.alert('Password Requirements', 'Password must contain at least one uppercase letter');
-          return false;
-        }
-        if (!/[a-z]/.test(password)) {
-          Alert.alert('Password Requirements', 'Password must contain at least one lowercase letter');
-          return false;
-        }
-        if (!/[0-9]/.test(password)) {
-          Alert.alert('Password Requirements', 'Password must contain at least one number');
-          return false;
-        }
-        if (password !== confirmPassword) {
-          Alert.alert('Password Mismatch', 'Passwords do not match');
+        if (!isValidEmailFormat(email)) {
+          Alert.alert(t('common.invalidEmail.title'), t('common.invalidEmail.message'));
           return false;
         }
         return true;
-      
+      case 5:
+        if (!phoneNumber.trim()) {
+          Alert.alert(t('common.required.title'), t('register.error.phoneRequired'));
+          return false;
+        }
+        return true;
+      case 6:
+        if (calculateAge(dateOfBirth) < 18) {
+          Alert.alert(t('register.alert.ageRequirement.title'), t('register.alert.ageRequirement.message'));
+          return false;
+        }
+        return true;
+      case 7:
+        if (!city.trim()) {
+          Alert.alert(t('common.required.title'), t('register.error.cityRequired'));
+          return false;
+        }
+        return true;
+      case 8:
+        if (!state.trim()) {
+          Alert.alert(t('common.required.title'), t('register.error.stateRequired'));
+          return false;
+        }
+        return true;
+      case 9:
+        if (password.length < 8) {
+          Alert.alert(t('register.alert.password.title'), t('register.error.passwordMinLength'));
+          return false;
+        }
+        if (!/[A-Z]/.test(password) || !/[a-z]/.test(password) || !/[0-9]/.test(password)) {
+          Alert.alert(t('register.alert.password.title'), t('register.error.passwordComplexity'));
+          return false;
+        }
+        return true;
+      case 10:
+        if (password !== confirmPassword) {
+          Alert.alert(t('register.alert.password.title'), t('register.error.passwordMismatch'));
+          return false;
+        }
+        return true;
       default:
         return true;
     }
@@ -251,678 +201,444 @@ const RegisterScreen = ({ navigation, route }) => {
 
   const handleNext = () => {
     if (!validateCurrentStep()) return;
-    
-    if (currentStep < totalSteps) {
-      setCurrentStep(currentStep + 1);
+    if (currentStep < TOTAL_STEPS) {
+      setCurrentStep((s) => s + 1);
     } else {
       handleRegister();
     }
   };
 
   const handleBack = () => {
-    if (currentStep > 1) {
-      setCurrentStep(currentStep - 1);
-    } else {
-      navigation.goBack();
-    }
+    if (currentStep > 1) setCurrentStep((s) => s - 1);
+    else navigation.goBack();
   };
 
   const handleRegister = async () => {
     if (!validateCurrentStep()) return;
-    
     setIsLoading(true);
-    
     try {
-      const userData = {
+      const result = await register({
         name: `${firstName.trim()} ${lastName.trim()}`,
         email: email.trim().toLowerCase(),
         phoneNumber: phoneNumber.trim(),
         dateOfBirth: formatDate(dateOfBirth),
-        address: {
-          city: city.trim(),
-          state: state.trim(),
-        },
-        password: password,
+        address: { city: city.trim(), state: state.trim() },
+        password,
         profilePicture: profilePicture || null,
-      };
-      
-      const result = await register(userData);
-      
+      });
       if (!result.success) {
-        Alert.alert(
-          'Registration Failed',
-          result.message || 'Unable to create account. Please try again.'
-        );
+        Alert.alert(t('register.alert.failed.title'), result.message || t('register.alert.failed.message'));
       }
-      // If successful, navigation will be handled by the auth context
     } catch (error) {
-      console.error('Registration error:', error);
-      Alert.alert(
-        'Registration Failed',
-        error.message || 'Unable to create account. Please try again.'
-      );
+      Alert.alert(t('register.alert.failed.title'), error.message || t('register.alert.failed.message'));
     } finally {
       setIsLoading(false);
     }
   };
 
-  const renderStep1 = () => (
-    <View style={styles.stepContainer}>
-      <Text style={[styles.stepTitle, { color: '#FFFFFF' }]}>
-        Let's Get Started
-      </Text>
-      <Text style={[styles.stepSubtitle, { color: 'rgba(255,255,255,0.7)' }]}>
-        Tell us about yourself
-      </Text>
-      
-      <View style={styles.profilePictureContainer}>
-        <TouchableOpacity style={styles.profilePictureButton} onPress={pickImage}>
-          {profilePicture ? (
-            <Image source={{ uri: profilePicture }} style={styles.profilePicture} />
-          ) : (
-            <View style={styles.profilePicturePlaceholder}>
-              <Icon name="camera" type="feather" size={32} color="rgba(255,255,255,0.7)" />
-            </View>
-          )}
-          <Text style={[styles.addPhotoText, { color: 'rgba(255,255,255,0.7)' }]}>
-            Add Photo
-          </Text>
-        </TouchableOpacity>
-      </View>
-      
-      <View style={styles.inputRow}>
-        <View style={styles.inputHalf}>
-          <Text style={[styles.inputLabel, { color: '#FFFFFF' }]}>First Name</Text>
-          <TextInput
-            style={[styles.input, { 
-              backgroundColor: 'rgba(255,255,255,0.1)',
-              color: '#FFFFFF',
-              borderColor: 'rgba(255,255,255,0.2)'
-            }]}
-            placeholder="Enter first name"
-            placeholderTextColor="rgba(255,255,255,0.5)"
-            value={firstName}
-            onChangeText={setFirstName}
-            autoCapitalize="words"
-          />
-        </View>
-        <View style={styles.inputHalf}>
-          <Text style={[styles.inputLabel, { color: '#FFFFFF' }]}>Last Name</Text>
-          <TextInput
-            style={[styles.input, { 
-              backgroundColor: 'rgba(255,255,255,0.1)',
-              color: '#FFFFFF',
-              borderColor: 'rgba(255,255,255,0.2)'
-            }]}
-            placeholder="Enter last name"
-            placeholderTextColor="rgba(255,255,255,0.5)"
-            value={lastName}
-            onChangeText={setLastName}
-            autoCapitalize="words"
-          />
-        </View>
-      </View>
+  const renderInput = (props) => (
+    <View style={styles.inputContainer}>
+      <TextInput
+        style={styles.input}
+        placeholderTextColor="rgba(255,255,255,0.5)"
+        {...props}
+      />
     </View>
   );
 
-  const renderStep2 = () => (
-    <View style={styles.stepContainer}>
-      <Text style={[styles.stepTitle, { color: '#FFFFFF' }]}>
-        Contact Information
-      </Text>
-      <Text style={[styles.stepSubtitle, { color: 'rgba(255,255,255,0.7)' }]}>
-        How can we reach you?
-      </Text>
-      
-      <Text style={[styles.inputLabel, { color: '#FFFFFF' }]}>Email Address</Text>
-      <TextInput
-        style={[styles.input, { 
-          backgroundColor: 'rgba(255,255,255,0.1)',
-          color: '#FFFFFF',
-          borderColor: 'rgba(255,255,255,0.2)'
-        }]}
-        placeholder="Enter email address"
-        placeholderTextColor="rgba(255,255,255,0.5)"
-        value={email}
-        onChangeText={setEmail}
-        keyboardType="email-address"
-        autoCapitalize="none"
-      />
-      
-      <Text style={[styles.inputLabel, { color: '#FFFFFF' }]}>Phone Number</Text>
-      <TextInput
-        style={[styles.input, { 
-          backgroundColor: 'rgba(255,255,255,0.1)',
-          color: '#FFFFFF',
-          borderColor: 'rgba(255,255,255,0.2)'
-        }]}
-        placeholder="Enter phone number"
-        placeholderTextColor="rgba(255,255,255,0.5)"
-        value={phoneNumber}
-        onChangeText={setPhoneNumber}
-        keyboardType="phone-pad"
-      />
-      
-      <Text style={[styles.inputLabel, { color: '#FFFFFF' }]}>Date of Birth</Text>
-      <TouchableOpacity
-        style={[styles.input, styles.datePickerButton, { 
-          backgroundColor: 'rgba(255,255,255,0.1)',
-          borderColor: 'rgba(255,255,255,0.2)'
-        }]}
-        onPress={() => setShowDatePicker(true)}
-      >
-        <Text style={[styles.datePickerText, { color: '#FFFFFF' }]}>
-          {formatDate(dateOfBirth)}
-        </Text>
-        <Icon name="calendar" type="feather" size={20} color="rgba(255,255,255,0.7)" />
-      </TouchableOpacity>
-      
-      <Text style={[styles.helperText, { color: 'rgba(255,255,255,0.5)' }]}>
-        You must be at least 18 years old
-      </Text>
-
-      {/* Date Picker Modal for iOS */}
-      {Platform.OS === 'ios' && (
-        <Modal
-          visible={showDatePicker}
-          transparent
-          animationType="fade"
-          onRequestClose={() => setShowDatePicker(false)}
-        >
-          <View style={styles.modalOverlay}>
-            <View style={styles.datePickerModal}>
-              <View style={styles.datePickerHeader}>
-                <TouchableOpacity
-                  style={styles.modalButton}
-                  onPress={() => setShowDatePicker(false)}
-                >
-                  <Text style={styles.modalButtonText}>Cancel</Text>
-                </TouchableOpacity>
-                <Text style={styles.modalTitle}>Select Date of Birth</Text>
-                <TouchableOpacity
-                  style={styles.modalButton}
-                  onPress={() => setShowDatePicker(false)}
-                >
-                  <Text style={[styles.modalButtonText, { fontWeight: '600' }]}>Done</Text>
-                </TouchableOpacity>
-              </View>
+  const renderStepContent = () => {
+    switch (currentStep) {
+      case 1:
+        return renderInput({
+          placeholder: t('register.placeholder.firstName'),
+          value: firstName,
+          onChangeText: setFirstName,
+          autoCapitalize: 'words',
+          autoFocus: true,
+          onSubmitEditing: handleNext,
+        });
+      case 2:
+        return renderInput({
+          placeholder: t('register.placeholder.lastName'),
+          value: lastName,
+          onChangeText: setLastName,
+          autoCapitalize: 'words',
+          autoFocus: true,
+          onSubmitEditing: handleNext,
+        });
+      case 3:
+        return (
+          <View style={styles.photoStep}>
+            <TouchableOpacity style={styles.photoButton} onPress={pickImage}>
+              {profilePicture ? (
+                <Image source={{ uri: profilePicture }} style={styles.photo} />
+              ) : (
+                <Icon name="user" type="feather" size={40} color="rgba(255,255,255,0.4)" />
+              )}
+            </TouchableOpacity>
+            <TouchableOpacity onPress={handleNext} style={styles.skipLink}>
+              <Text style={styles.skipText}>{t('common.skipForNow')}</Text>
+            </TouchableOpacity>
+          </View>
+        );
+      case 4:
+        return renderInput({
+          placeholder: t('register.placeholder.email'),
+          value: email,
+          onChangeText: setEmail,
+          keyboardType: 'email-address',
+          autoCapitalize: 'none',
+          autoFocus: true,
+          editable: !prefilledEmail,
+          onSubmitEditing: handleNext,
+        });
+      case 5:
+        return renderInput({
+          placeholder: t('register.placeholder.phoneNumber'),
+          value: phoneNumber,
+          onChangeText: setPhoneNumber,
+          keyboardType: 'phone-pad',
+          autoFocus: true,
+          onSubmitEditing: handleNext,
+        });
+      case 6:
+        return (
+          <>
+            <TouchableOpacity
+              style={styles.inputContainer}
+              onPress={() => setShowDatePicker(true)}
+            >
+              <Text style={styles.dateText}>{formatDate(dateOfBirth)}</Text>
+              <Icon name="calendar" type="feather" size={20} color="rgba(255,255,255,0.5)" />
+            </TouchableOpacity>
+            {Platform.OS === 'ios' && (
+              <Modal visible={showDatePicker} transparent animationType="fade">
+                <View style={styles.modalOverlay}>
+                  <View style={styles.dateModal}>
+                    <View style={styles.dateModalHeader}>
+                      <TouchableOpacity onPress={() => setShowDatePicker(false)}>
+                        <Text style={styles.dateModalBtn}>{t('common.done')}</Text>
+                      </TouchableOpacity>
+                    </View>
+                    <DateTimePicker
+                      value={dateOfBirth}
+                      mode="date"
+                      display="spinner"
+                      onChange={handleDateChange}
+                      maximumDate={new Date()}
+                      minimumDate={new Date(1900, 0, 1)}
+                      themeVariant="dark"
+                    />
+                  </View>
+                </View>
+              </Modal>
+            )}
+            {Platform.OS === 'android' && showDatePicker && (
               <DateTimePicker
                 value={dateOfBirth}
                 mode="date"
-                display="spinner"
+                display="default"
                 onChange={handleDateChange}
                 maximumDate={new Date()}
                 minimumDate={new Date(1900, 0, 1)}
-                textColor="#FFFFFF"
-                themeVariant="dark"
               />
-            </View>
-          </View>
-        </Modal>
-      )}
-
-      {/* Date Picker for Android */}
-      {Platform.OS === 'android' && showDatePicker && (
-        <DateTimePicker
-          value={dateOfBirth}
-          mode="date"
-          display="default"
-          onChange={handleDateChange}
-          maximumDate={new Date()}
-          minimumDate={new Date(1900, 0, 1)}
-        />
-      )}
-    </View>
-  );
-
-  const renderStep3 = () => (
-    <View style={styles.stepContainer}>
-      <Text style={[styles.stepTitle, { color: '#FFFFFF' }]}>
-        Your Location
-      </Text>
-      <Text style={[styles.stepSubtitle, { color: 'rgba(255,255,255,0.7)' }]}>
-        Help us recommend local events
-      </Text>
-      
-      <View style={styles.inputRow}>
-        <View style={styles.inputHalf}>
-          <Text style={[styles.inputLabel, { color: '#FFFFFF' }]}>City</Text>
-          <TextInput
-            style={[styles.input, { 
-              backgroundColor: 'rgba(255,255,255,0.1)',
-              color: '#FFFFFF',
-              borderColor: 'rgba(255,255,255,0.2)'
-            }]}
-            placeholder="Enter city"
-            placeholderTextColor="rgba(255,255,255,0.5)"
-            value={city}
-            onChangeText={setCity}
-            autoCapitalize="words"
-          />
-        </View>
-        <View style={styles.inputHalf}>
-          <Text style={[styles.inputLabel, { color: '#FFFFFF' }]}>State</Text>
-          <TextInput
-            style={[styles.input, { 
-              backgroundColor: 'rgba(255,255,255,0.1)',
-              color: '#FFFFFF',
-              borderColor: 'rgba(255,255,255,0.2)'
-            }]}
-            placeholder="Enter state"
-            placeholderTextColor="rgba(255,255,255,0.5)"
-            value={state}
-            onChangeText={setState}
-            autoCapitalize="characters"
-          />
-        </View>
-      </View>
-    </View>
-  );
-
-  const renderStep4 = () => (
-    <View style={styles.stepContainer}>
-      <Text style={[styles.stepTitle, { color: '#FFFFFF' }]}>
-        Account Security
-      </Text>
-      <Text style={[styles.stepSubtitle, { color: 'rgba(255,255,255,0.7)' }]}>
-        Create a secure password
-      </Text>
-      
-      <Text style={[styles.inputLabel, { color: '#FFFFFF' }]}>Password</Text>
-      <View style={styles.passwordContainer}>
-        <TextInput
-          style={[styles.passwordInput, { 
-            backgroundColor: 'rgba(255,255,255,0.1)',
-            color: '#FFFFFF',
-            borderColor: 'rgba(255,255,255,0.2)'
-          }]}
-          placeholder="Enter password"
-          placeholderTextColor="rgba(255,255,255,0.5)"
-          value={password}
-          onChangeText={setPassword}
-          secureTextEntry={!showPassword}
-          autoCapitalize="none"
-        />
-        <TouchableOpacity
-          style={styles.eyeButton}
-          onPress={() => setShowPassword(!showPassword)}
-        >
-          <Icon
-            name={showPassword ? "eye-off" : "eye"}
-            type="feather"
-            size={20}
-            color="rgba(255,255,255,0.7)"
-          />
-        </TouchableOpacity>
-      </View>
-      
-      <Text style={[styles.inputLabel, { color: '#FFFFFF' }]}>Confirm Password</Text>
-      <View style={styles.passwordContainer}>
-        <TextInput
-          style={[styles.passwordInput, { 
-            backgroundColor: 'rgba(255,255,255,0.1)',
-            color: '#FFFFFF',
-            borderColor: 'rgba(255,255,255,0.2)'
-          }]}
-          placeholder="Confirm password"
-          placeholderTextColor="rgba(255,255,255,0.5)"
-          value={confirmPassword}
-          onChangeText={setConfirmPassword}
-          secureTextEntry={!showConfirmPassword}
-          autoCapitalize="none"
-        />
-        <TouchableOpacity
-          style={styles.eyeButton}
-          onPress={() => setShowConfirmPassword(!showConfirmPassword)}
-        >
-          <Icon
-            name={showConfirmPassword ? "eye-off" : "eye"}
-            type="feather"
-            size={20}
-            color="rgba(255,255,255,0.7)"
-          />
-        </TouchableOpacity>
-      </View>
-      
-      <View style={[styles.passwordRequirements, { borderTopColor: 'rgba(255,255,255,0.2)' }]}>
-        <Text style={[styles.requirementsTitle, { color: '#FFFFFF' }]}>
-          Password Requirements:
-        </Text>
-        
-        {[
-          { text: 'At least 8 characters', met: password.length >= 8 },
-          { text: 'One uppercase letter', met: /[A-Z]/.test(password) },
-          { text: 'One lowercase letter', met: /[a-z]/.test(password) },
-          { text: 'One number', met: /[0-9]/.test(password) },
-          { text: 'Passwords match', met: password === confirmPassword && password.length > 0 }
-        ].map((requirement, index) => (
-          <View key={index} style={styles.requirementRow}>
-            <Icon
-              name={requirement.met ? "check-circle" : "circle"}
-              type="feather"
-              size={16}
-              color={requirement.met ? '#4CAF50' : 'rgba(255,255,255,0.3)'}
-              style={styles.requirementIcon}
+            )}
+          </>
+        );
+      case 7:
+        return renderInput({
+          placeholder: t('register.placeholder.city'),
+          value: city,
+          onChangeText: setCity,
+          autoCapitalize: 'words',
+          autoFocus: true,
+          onSubmitEditing: handleNext,
+        });
+      case 8:
+        return renderInput({
+          placeholder: t('register.placeholder.state'),
+          value: state,
+          onChangeText: setState,
+          autoCapitalize: 'characters',
+          autoFocus: true,
+          onSubmitEditing: handleNext,
+        });
+      case 9:
+        return (
+          <View style={styles.inputContainer}>
+            <TextInput
+              style={[styles.input, { paddingRight: 48 }]}
+              placeholder={t('register.placeholder.password')}
+              placeholderTextColor="rgba(255,255,255,0.5)"
+              value={password}
+              onChangeText={setPassword}
+              secureTextEntry={!showPassword}
+              autoCapitalize="none"
+              autoFocus
+              onSubmitEditing={handleNext}
             />
-            <Text style={[styles.requirement, { 
-              color: requirement.met ? '#4CAF50' : 'rgba(255,255,255,0.5)' 
-            }]}>
-              {requirement.text}
-            </Text>
+            <TouchableOpacity style={styles.eyeButton} onPress={() => setShowPassword(!showPassword)}>
+              <Icon name={showPassword ? 'eye-off' : 'eye'} type="feather" size={20} color="rgba(255,255,255,0.7)" />
+            </TouchableOpacity>
           </View>
-        ))}
-      </View>
-    </View>
-  );
-
-  const renderCurrentStep = () => {
-    switch (currentStep) {
-      case 1: return renderStep1();
-      case 2: return renderStep2();
-      case 3: return renderStep3();
-      case 4: return renderStep4();
-      default: return renderStep1();
+        );
+      case 10:
+        return (
+          <View style={styles.inputContainer}>
+            <TextInput
+              style={[styles.input, { paddingRight: 48 }]}
+              placeholder={t('register.placeholder.confirmPassword')}
+              placeholderTextColor="rgba(255,255,255,0.5)"
+              value={confirmPassword}
+              onChangeText={setConfirmPassword}
+              secureTextEntry={!showConfirmPassword}
+              autoCapitalize="none"
+              autoFocus
+              onSubmitEditing={handleRegister}
+            />
+            <TouchableOpacity
+              style={styles.eyeButton}
+              onPress={() => setShowConfirmPassword(!showConfirmPassword)}
+            >
+              <Icon
+                name={showConfirmPassword ? 'eye-off' : 'eye'}
+                type="feather"
+                size={20}
+                color="rgba(255,255,255,0.7)"
+              />
+            </TouchableOpacity>
+          </View>
+        );
+      default:
+        return null;
     }
   };
 
+  const isLastStep = currentStep === TOTAL_STEPS;
+
   return (
     <SafeAreaView style={styles.container}>
-      <LinearGradient
-        colors={['#1A1A1A', '#2A2A2A', '#1A1A1A']}
-        style={styles.backgroundGradient}
-      />
-      
-      <KeyboardAvoidingView 
+      <LinearGradient colors={['#0c162d', '#1a2a4a', '#0c162d']} style={styles.backgroundGradient} />
+      <View style={styles.overlay} />
+
+      <KeyboardAvoidingView
         style={styles.keyboardView}
-        behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
+        behavior={Platform.OS === 'ios' ? 'padding' : undefined}
+        keyboardVerticalOffset={Platform.OS === 'ios' ? insets.top : 0}
       >
-        {/* Header */}
-        <Animated.View style={[styles.header, { opacity: fadeAnim }]}>
-          <TouchableOpacity style={styles.backButton} onPress={handleBack}>
-            <Icon name="arrow-left" type="feather" size={24} color="#FFFFFF" />
+        <View style={styles.topBar}>
+          <TouchableOpacity style={styles.backButton} onPress={handleBack} hitSlop={{ top: 12, bottom: 12, left: 12, right: 12 }}>
+            <Icon name="arrow-left" type="feather" size={22} color="#FFFFFF" />
           </TouchableOpacity>
-          <Text style={styles.headerTitle}>
-            Create Account
-          </Text>
-          <View style={styles.headerRight}>
-            <Text style={styles.stepCounter}>
-              {currentStep}/{totalSteps}
-            </Text>
-          </View>
-        </Animated.View>
+          <SimpleStepDots current={currentStep} total={TOTAL_STEPS} />
+          <Text style={styles.stepCount}>{t('register.stepCount', { current: currentStep, total: TOTAL_STEPS })}</Text>
+        </View>
 
-        {/* Step Indicator */}
-        <Animated.View style={[styles.stepIndicatorContainer, { 
-          opacity: fadeAnim,
-          transform: [{ translateY: slideAnim }]
-        }]}>
-          <StepIndicator currentStep={currentStep} totalSteps={totalSteps} theme={theme} />
-        </Animated.View>
+        <ScrollView
+          ref={scrollRef}
+          style={styles.scrollView}
+          contentContainerStyle={[
+            styles.scrollContent,
+            keyboardVisible && styles.scrollContentKeyboard,
+          ]}
+          keyboardShouldPersistTaps="handled"
+          keyboardDismissMode="on-drag"
+          showsVerticalScrollIndicator={false}
+          bounces={false}
+        >
+          <Pressable onPress={Keyboard.dismiss}>
+            <Animated.View
+              style={[
+                styles.main,
+                keyboardVisible && styles.mainKeyboardOpen,
+                { opacity: fadeAnim, transform: [{ translateY: slideAnim }] },
+              ]}
+            >
+              <Text style={[styles.brand, keyboardVisible && styles.brandCompact]}>{t('brand.name')}</Text>
+              <Text style={styles.prompt}>{t(STEP_PROMPT_KEYS[currentStep])}</Text>
+              <View style={styles.fieldWrap}>{renderStepContent()}</View>
+            </Animated.View>
+          </Pressable>
+        </ScrollView>
 
-        {/* Content */}
-        <Animated.View style={[styles.content, { 
-          opacity: fadeAnim,
-          transform: [{ translateY: slideAnim }]
-        }]}>
-          <ScrollView showsVerticalScrollIndicator={false}>
-            {renderCurrentStep()}
-          </ScrollView>
-        </Animated.View>
-
-        {/* Bottom Navigation */}
-        <Animated.View style={[styles.bottomNav, { opacity: fadeAnim }]}>
-          <Button
-            title={currentStep === totalSteps ? "Create Account" : "Continue"}
-            buttonStyle={styles.nextButton}
-            titleStyle={styles.nextButtonText}
+        <View style={[styles.footer, { paddingBottom: Math.max(insets.bottom, 16) }]}>
+          <TouchableOpacity
+            style={styles.actionButton}
             onPress={handleNext}
-            loading={isLoading}
             disabled={isLoading}
-          />
-        </Animated.View>
+          >
+            {isLoading ? (
+              <ActivityIndicator color="#0c162d" />
+            ) : (
+              <Text style={styles.actionButtonText}>
+                {isLastStep ? t('register.button.createAccount') : t('common.continue')}
+              </Text>
+            )}
+          </TouchableOpacity>
+        </View>
       </KeyboardAvoidingView>
     </SafeAreaView>
   );
 };
 
 const styles = StyleSheet.create({
-  container: {
-    flex: 1,
-    backgroundColor: '#1A1A1A',
-  },
+  container: { flex: 1 },
   backgroundGradient: {
     position: 'absolute',
-    left: 0,
-    right: 0,
     top: 0,
+    left: 0,
     bottom: 0,
+    right: 0,
   },
-  keyboardView: {
-    flex: 1,
+  overlay: {
+    ...StyleSheet.absoluteFillObject,
+    backgroundColor: 'rgba(0, 0, 0, 0.85)',
   },
-  header: {
+  keyboardView: { flex: 1 },
+  scrollView: { flex: 1 },
+  scrollContent: {
+    flexGrow: 1,
+    justifyContent: 'center',
+    paddingBottom: 16,
+  },
+  scrollContentKeyboard: {
+    justifyContent: 'flex-start',
+    paddingTop: 4,
+  },
+  topBar: {
     flexDirection: 'row',
     alignItems: 'center',
+    paddingHorizontal: 20,
+    paddingTop: 8,
+    paddingBottom: 16,
+  },
+  backButton: { width: 40, padding: 4 },
+  dotsRow: {
+    flex: 1,
+    flexDirection: 'row',
+    justifyContent: 'center',
+    alignItems: 'center',
+    gap: 6,
+    flexWrap: 'wrap',
+    paddingHorizontal: 8,
+  },
+  dot: {
+    width: 6,
+    height: 6,
+    borderRadius: 3,
+  },
+  dotActive: { backgroundColor: '#FFFFFF' },
+  dotInactive: { backgroundColor: 'rgba(255,255,255,0.2)' },
+  stepCount: {
+    width: 40,
+    textAlign: 'right',
+    fontSize: 12,
+    color: 'rgba(255,255,255,0.45)',
+    fontWeight: '500',
+  },
+  main: {
     paddingHorizontal: 24,
-    paddingTop: 16,
+    paddingTop: 8,
+    paddingBottom: 24,
+  },
+  mainKeyboardOpen: {
+    paddingTop: 0,
     paddingBottom: 8,
   },
-  backButton: {
-    padding: 8,
-  },
-  headerTitle: {
-    flex: 1,
-    textAlign: 'center',
-    fontSize: 20,
-    fontWeight: '700',
+  brand: {
+    fontSize: 48,
+    fontWeight: '800',
     color: '#FFFFFF',
-  },
-  headerRight: {
-    width: 40,
-    alignItems: 'flex-end',
-  },
-  stepCounter: {
-    fontSize: 14,
-    fontWeight: '600',
-    color: 'rgba(255,255,255,0.7)',
-  },
-  stepIndicatorContainer: {
-    paddingHorizontal: 24,
-    paddingVertical: 20,
-  },
-  stepIndicator: {
-    flexDirection: 'row',
-    justifyContent: 'center',
-    alignItems: 'center',
-  },
-  stepCircle: {
-    width: 32,
-    height: 32,
-    borderRadius: 16,
-    justifyContent: 'center',
-    alignItems: 'center',
-  },
-  stepNumber: {
-    fontSize: 14,
-    fontWeight: '600',
-  },
-  stepLine: {
-    width: 40,
-    height: 2,
-  },
-  content: {
-    flex: 1,
-    paddingHorizontal: 24,
-  },
-  stepContainer: {
-    flex: 1,
-    paddingBottom: 20,
-  },
-  stepTitle: {
-    fontSize: 28,
-    fontWeight: '700',
-    marginBottom: 8,
+    letterSpacing: 2,
     textAlign: 'center',
+    marginBottom: 48,
+    fontFamily: Platform.OS === 'ios' ? 'Helvetica Neue' : 'sans-serif-condensed',
   },
-  stepSubtitle: {
-    fontSize: 16,
-    marginBottom: 32,
-    textAlign: 'center',
-    lineHeight: 22,
-  },
-  profilePictureContainer: {
-    alignItems: 'center',
-    marginBottom: 32,
-  },
-  profilePictureButton: {
-    alignItems: 'center',
-  },
-  profilePicture: {
-    width: 100,
-    height: 100,
-    borderRadius: 50,
-  },
-  profilePicturePlaceholder: {
-    width: 100,
-    height: 100,
-    borderRadius: 50,
-    justifyContent: 'center',
-    alignItems: 'center',
-    borderWidth: 2,
-    borderStyle: 'dashed',
-    borderColor: 'rgba(255,255,255,0.3)',
-    backgroundColor: 'rgba(255,255,255,0.05)',
-  },
-  addPhotoText: {
-    fontSize: 12,
-    fontWeight: '600',
-    marginTop: 8,
-  },
-  inputRow: {
-    flexDirection: 'row',
-    gap: 16,
+  brandCompact: {
+    fontSize: 32,
     marginBottom: 16,
   },
-  inputHalf: {
-    flex: 1,
+  prompt: {
+    fontSize: 22,
+    fontWeight: '700',
+    color: '#FFFFFF',
+    textAlign: 'center',
+    marginBottom: 20,
   },
-  inputLabel: {
-    fontSize: 16,
-    fontWeight: '600',
-    marginBottom: 8,
+  fieldWrap: {
+    width: '100%',
+  },
+  inputContainer: {
+    width: '100%',
+    backgroundColor: 'rgba(40, 40, 40, 0.8)',
+    borderRadius: 12,
+    flexDirection: 'row',
+    alignItems: 'center',
+    height: 56,
+    paddingHorizontal: 16,
+    borderWidth: 2,
+    borderColor: 'rgba(255, 255, 255, 0.1)',
   },
   input: {
-    borderRadius: 12,
-    padding: 16,
-    fontSize: 16,
-    marginBottom: 16,
-    borderWidth: 1,
-  },
-  datePickerButton: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-  },
-  datePickerText: {
-    fontSize: 16,
-  },
-  helperText: {
-    fontSize: 12,
-    marginTop: -8,
-    marginBottom: 16,
-    fontStyle: 'italic',
-  },
-  passwordContainer: {
-    position: 'relative',
-    marginBottom: 16,
-  },
-  passwordInput: {
-    borderRadius: 12,
-    padding: 16,
-    paddingRight: 50,
-    fontSize: 16,
-    borderWidth: 1,
-  },
-  eyeButton: {
-    position: 'absolute',
-    right: 16,
-    top: 16,
-    padding: 4,
-  },
-  passwordRequirements: {
-    marginTop: 16,
-    paddingTop: 16,
-    borderTopWidth: 1,
-  },
-  requirementsTitle: {
-    fontSize: 14,
-    fontWeight: '600',
-    marginBottom: 12,
-  },
-  requirementRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    marginBottom: 8,
-  },
-  requirementIcon: {
-    marginRight: 8,
-  },
-  requirement: {
-    fontSize: 14,
     flex: 1,
+    height: 56,
+    color: '#FFFFFF',
+    fontSize: 16,
   },
-  bottomNav: {
+  dateText: {
+    flex: 1,
+    color: '#FFFFFF',
+    fontSize: 16,
+  },
+  eyeButton: { padding: 8 },
+  photoStep: { alignItems: 'center' },
+  photoButton: {
+    width: 120,
+    height: 120,
+    borderRadius: 60,
+    backgroundColor: 'rgba(40, 40, 40, 0.8)',
+    borderWidth: 2,
+    borderColor: 'rgba(255, 255, 255, 0.1)',
+    justifyContent: 'center',
+    alignItems: 'center',
+    overflow: 'hidden',
+  },
+  photo: { width: 120, height: 120, borderRadius: 60 },
+  skipLink: { marginTop: 20, padding: 8 },
+  skipText: { color: 'rgba(255,255,255,0.45)', fontSize: 14 },
+  footer: {
     paddingHorizontal: 24,
-    paddingVertical: 16,
-    paddingBottom: Platform.OS === 'ios' ? 34 : 16,
+    paddingTop: 8,
   },
-  nextButton: {
+  actionButton: {
+    width: '100%',
+    height: 56,
     borderRadius: 12,
-    paddingVertical: 16,
     backgroundColor: '#FFFFFF',
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.1,
-    shadowRadius: 4,
-    elevation: 3,
+    justifyContent: 'center',
+    alignItems: 'center',
   },
-  nextButtonText: {
+  actionButtonText: {
+    color: '#0c162d',
     fontSize: 18,
     fontWeight: '700',
-    color: '#1A1A1A',
   },
-  // Date Picker Modal Styles
   modalOverlay: {
     flex: 1,
-    backgroundColor: 'rgba(0,0,0,0.7)',
+    backgroundColor: 'rgba(0,0,0,0.8)',
     justifyContent: 'flex-end',
   },
-  datePickerModal: {
-    backgroundColor: '#2A2A2A',
-    borderTopLeftRadius: 20,
-    borderTopRightRadius: 20,
+  dateModal: {
+    backgroundColor: '#1a1a1a',
+    borderTopLeftRadius: 16,
+    borderTopRightRadius: 16,
     paddingBottom: Platform.OS === 'ios' ? 34 : 20,
   },
-  datePickerHeader: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    padding: 20,
-    borderBottomWidth: 1,
-    borderBottomColor: 'rgba(255,255,255,0.1)',
+  dateModalHeader: {
+    alignItems: 'flex-end',
+    padding: 16,
   },
-  modalTitle: {
-    fontSize: 18,
-    fontWeight: '600',
-    color: '#FFFFFF',
-  },
-  modalButton: {
-    padding: 8,
-  },
-  modalButtonText: {
-    fontSize: 16,
-    color: '#FFFFFF',
-  },
+  dateModalBtn: { color: '#FFFFFF', fontSize: 16, fontWeight: '600' },
 });
 
-export default RegisterScreen; 
+export default RegisterScreen;

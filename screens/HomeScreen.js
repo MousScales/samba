@@ -1,4 +1,4 @@
-import React, { useState, useRef, useEffect } from 'react';
+import React, { useState, useRef, useEffect, useMemo } from 'react';
 import {
   StyleSheet,
   View,
@@ -12,16 +12,42 @@ import {
   StatusBar,
   TextInput,
   Alert,
+  ActivityIndicator,
 } from 'react-native';
 import { Text, useTheme, Icon } from '@rneui/themed';
-import { SafeAreaView } from 'react-native-safe-area-context';
+import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 import { LinearGradient } from 'expo-linear-gradient';
 import CustomNavBar from '../components/CustomNavBar';
+import PortraitEventCard from '../components/PortraitEventCard';
 import { useEvents } from '../context/EventsContext';
 import { useAuth } from '../context/AuthContext';
+import { useLanguage } from '../context/LanguageContext';
 import { formatCount } from '../utils/formatNumbers';
+import { useSubtleEntrance } from '../utils/useSubtleEntrance';
 
-const { width } = Dimensions.get('window');
+const { width, height: SCREEN_HEIGHT } = Dimensions.get('window');
+const HEADER_HEIGHT = 52;
+const NAV_RESERVED = 110;
+
+const CATEGORIES = [
+  { id: 'Discover', key: 'home.category.discover', emoji: '🌐' },
+  { id: 'Sports',   key: 'home.category.sports',   emoji: '⚽' },
+  { id: 'Music',    key: 'home.category.music',    emoji: '🎵' },
+  { id: 'Shows',    key: 'home.category.shows',    emoji: '🎭' },
+  { id: 'Food',     key: 'home.category.food',     emoji: '🍔' },
+  { id: 'Arts',     key: 'home.category.arts',     emoji: '🎨' },
+  { id: 'Nightlife',key: 'home.category.nightlife',emoji: '🌙' },
+];
+
+const CATEGORY_KEYS = {
+  Discover: 'home.category.discover',
+  Sports: 'home.category.sports',
+  Music: 'home.category.music',
+  Shows: 'home.category.shows',
+  Food: 'home.category.food',
+  Arts: 'home.category.arts',
+  Nightlife: 'home.category.nightlife',
+};
 
 const TimeFilter = ({ title, isActive, onPress }) => {
   const { theme } = useTheme();
@@ -77,138 +103,72 @@ const PriceFilter = ({ title, isActive, onPress }) => {
   );
 };
 
-const EventCard = ({ event, theme, onPress, index, animatedValue }) => {
+const CARD_WIDTH = width - 32;
+
+const EventCard = ({ event, onPress, animatedValue, cardWidth = CARD_WIDTH, aspectRatio = 1.32, bottomMargin = 14 }) => {
+  const { t } = useLanguage();
   const translateY = animatedValue.interpolate({
     inputRange: [0, 1],
-    outputRange: [50, 0],
+    outputRange: [8, 0],
   });
-  
   const opacity = animatedValue.interpolate({
     inputRange: [0, 1],
     outputRange: [0, 1],
   });
 
-  const scale = animatedValue.interpolate({
-    inputRange: [0, 1],
-    outputRange: [0.9, 1],
-  });
-
-  // Check if event is sold out
   const isSoldOut = event.spotsLeft === 0;
-  
-  // Use View instead of TouchableOpacity for sold out events
-  const CardComponent = isSoldOut ? View : TouchableOpacity;
+  const isLive = event.originalEvent?.status === 'live';
+
+  const spotsBadge = (
+    <Text style={[styles.spotsText, isSoldOut && styles.spotsTextSoldOut]}>
+      {event.spotsLeft === '∞' ? t('home.spots.unlimitedLeft') :
+       isSoldOut ? t('home.spots.soldOut') :
+       t('home.spots.left', { count: event.spotsLeft })}
+    </Text>
+  );
 
   return (
     <Animated.View
       style={{
-        opacity: isSoldOut ? 0.6 : opacity, // Reduce opacity for sold out events
-        transform: [{ translateY }, { scale }],
+        opacity,
+        transform: [{ translateY }],
+        alignSelf: 'center',
+        width: cardWidth,
       }}
     >
-  <CardComponent
-        style={[
-          styles.eventCard, 
-          { 
-            shadowColor: '#000',
-            shadowOffset: { width: 0, height: 4 },
-            shadowOpacity: 0.15,
-            shadowRadius: 8,
-            elevation: 8,
-          },
-          isSoldOut && { borderColor: 'rgba(255, 59, 48, 0.3)', borderWidth: 1 } // Add border for sold out events
-        ]}
-    activeOpacity={isSoldOut ? 1 : 0.7}
-    onPress={isSoldOut ? undefined : onPress}
-  >
-    <Image
-      source={{ uri: event.image }}
-      style={styles.eventImage}
-      resizeMode="cover"
-    />
-    
-    {/* Gradient overlay for better text readability */}
-    <LinearGradient
-      colors={['rgba(0,0,0,0.2)', 'rgba(0,0,0,0.8)']}
-      style={styles.imageOverlay}
-    />
-    
-    {/* Content overlay */}
-    <View style={styles.eventContentOverlay}>
-      {/* Top row - Date and Category */}
-      <View style={styles.eventTopRow}>
-        <View style={styles.dateBadge}>
-          <Text style={styles.eventDate}>
-          {event.date}
-        </Text>
-        </View>
-        <View style={styles.categoryBadge}>
-          <Text style={styles.categoryText}>
-            {event.category}
-        </Text>
-        </View>
-      </View>
-      
-      {/* Bottom content */}
-      <View style={styles.eventBottomContent}>
-        <Text style={styles.eventTitle} numberOfLines={2}>
-          {event.title}
-        </Text>
-        
-        <View style={styles.eventLocationRow}>
-          <Icon
-            name="map-pin"
-            type="feather"
-            size={14}
-            color="rgba(255,255,255,0.8)"
-            style={styles.detailIcon}
-          />
-          <Text style={styles.eventLocation} numberOfLines={1}>
-            {event.venue || event.location || 'Venue TBD'}
-          </Text>
-        </View>
-
-        <View style={styles.eventFooterOverlay}>
-          <View style={[
-            styles.spotsContainer, 
-            { backgroundColor: event.spotsLeft === 0 ? 'rgba(255, 59, 48, 0.9)' : 'rgba(76, 175, 80, 0.9)' }
-          ]}>
-            <Text style={[
-              styles.spotsText, 
-              { color: '#FFFFFF' }
-            ]}>
-              {event.spotsLeft === '∞' ? '∞ spots available' : 
-               event.spotsLeft === 0 ? 'Sold Out' : 
-               `${event.spotsLeft} spots left`}
-            </Text>
-          </View>
-
-          <Text style={styles.priceText}>
-              {event.price}
-            </Text>
-          </View>
-        </View>
-      </View>
-  </CardComponent>
+      <PortraitEventCard
+        variant="attendee"
+        width={cardWidth}
+        aspectRatio={aspectRatio}
+        title={event.title}
+        imageUri={event.image}
+        dateLabel={event.date}
+        timeLabel={event.time || null}
+        venue={event.location || t('common.venueTbd')}
+        meta={event.category?.toUpperCase()}
+        price={event.price}
+        isLive={isLive}
+        liveLabel={t('home.liveNow')}
+        isSoldOut={isSoldOut}
+        onPress={isSoldOut ? undefined : onPress}
+        topRight={spotsBadge}
+        bottomMargin={bottomMargin}
+      />
     </Animated.View>
-);
+  );
 };
 
 // Enhanced organizer card for followed organizers
 const FollowedOrganizerCard = ({ organizer, theme, onPress, animatedValue }) => {
+  const { t } = useLanguage();
   const translateY = animatedValue.interpolate({
     inputRange: [0, 1],
-    outputRange: [50, 0],
+    outputRange: [8, 0],
   });
   
   const opacity = animatedValue.interpolate({
     inputRange: [0, 1],
     outputRange: [0, 1],
-  });
-
-  const scale = animatedValue.interpolate({
-    inputRange: [0, 1],
-    outputRange: [0.9, 1],
   });
 
   // Generate avatar initials from name
@@ -230,10 +190,10 @@ const FollowedOrganizerCard = ({ organizer, theme, onPress, animatedValue }) => 
 
   // Clean up the organizer name (remove hash if it looks like one)
   const getDisplayName = (name) => {
-    if (!name) return 'Unknown Organizer';
+    if (!name) return t('home.organizer.unknown');
     // If it's a long hash-like string, extract a more readable name
     if (name.length > 20 && name.includes('b') && name.includes('f')) {
-      return 'Event Organizer';
+      return t('common.eventOrganizer');
     }
     return name;
   };
@@ -246,7 +206,7 @@ const FollowedOrganizerCard = ({ organizer, theme, onPress, animatedValue }) => 
     <Animated.View
       style={{
         opacity,
-        transform: [{ translateY }, { scale }],
+        transform: [{ translateY }],
       }}
     >
       <TouchableOpacity
@@ -276,13 +236,63 @@ const FollowedOrganizerCard = ({ organizer, theme, onPress, animatedValue }) => 
 
 const HomeScreen = ({ navigation }) => {
   const { theme } = useTheme();
+  const { t, locale } = useLanguage();
+  const insets = useSafeAreaInsets();
   const { userLocation, locationPermission, requestLocationPermission } = useAuth();
   const { getUpcomingEvents, getLiveEvents, events, loading, followedOrganizers, isFollowingOrganizer, organizerFollowers, getEventsNearUser, getEventsByState } = useEvents();
   const [searchQuery, setSearchQuery] = useState('');
   const [filteredEvents, setFilteredEvents] = useState([]);
-  
-  const fadeAnim = useRef(new Animated.Value(0)).current;
-  const slideAnim = useRef(new Animated.Value(30)).current;
+
+  // Location panel state
+  const [locationOpen, setLocationOpen] = useState(false);
+  const [locationSearch, setLocationSearch] = useState('');
+  const [locationSuggestions, setLocationSuggestions] = useState([]);
+  const [locationSearching, setLocationSearching] = useState(false);
+  const [selectedCity, setSelectedCity] = useState(null);
+  const locationSearchTimeout = useRef(null);
+  const panelAnim = useRef(new Animated.Value(0)).current;
+  const feedListRef = useRef(null);
+  const isLoopJumpingRef = useRef(false);
+
+  const openLocationSheet = () => {
+    setLocationOpen(true);
+    Animated.spring(panelAnim, {
+      toValue: 1,
+      useNativeDriver: false,
+      tension: 60,
+      friction: 10,
+    }).start();
+  };
+
+  const closeLocationSheet = () => {
+    Animated.spring(panelAnim, {
+      toValue: 0,
+      useNativeDriver: false,
+      tension: 80,
+      friction: 12,
+    }).start(() => {
+      setLocationOpen(false);
+      setLocationSearch('');
+      setLocationSuggestions([]);
+    });
+  };
+
+  const toggleLocationSheet = () => {
+    if (locationOpen) {
+      closeLocationSheet();
+    } else {
+      openLocationSheet();
+    }
+  };
+
+  // Category filter state
+  const [activeCategory, setActiveCategory] = useState('Discover');
+
+  const { fadeAnim, slideAnim } = useSubtleEntrance();
+
+  const feedItemHeight = SCREEN_HEIGHT - insets.top - HEADER_HEIGHT - NAV_RESERVED;
+  const feedCardWidth = width - 32;
+  const feedCardAspect = (feedItemHeight - 20) / feedCardWidth;
 
   const formatEventsForDisplay = (events) => {
     if (!events) return [];
@@ -304,31 +314,23 @@ const HomeScreen = ({ navigation }) => {
       const hasUnlimitedFree = event.tickets.some(t => t.isFree && t.isUnlimited);
       const hasFreeTickets = event.tickets.some(t => t.isFree);
       
-      let priceDisplay = 'Free';
+      let priceDisplay = t('common.free');
       if (!hasFreeTickets && lowestPrice !== Infinity) {
-        priceDisplay = `$${lowestPrice}`;
+        priceDisplay = t('home.priceFrom', { price: lowestPrice });
       } else if (hasFreeTickets && lowestPrice !== Infinity) {
-        priceDisplay = `Free - $${lowestPrice}`;
+        priceDisplay = t('home.priceFreeToPaid', { price: lowestPrice });
       }
+
+      const dateObj = event.date ? (event.date instanceof Date ? event.date : new Date(event.date)) : null;
+      const validDate = dateObj && !isNaN(dateObj.getTime());
 
       return {
         id: event.id,
         title: event.title,
-        date: (() => {
-          try {
-            if (!event.date) return 'Event Date';
-            const dateObj = event.date instanceof Date ? event.date : new Date(event.date);
-            return isNaN(dateObj.getTime()) ? 'Event Date' : dateObj.toLocaleDateString('en-US', { 
-          weekday: 'short', 
-          month: 'short', 
-          day: 'numeric' 
-            });
-          } catch (error) {
-            return 'Event Date';
-          }
-        })(),
+        date: validDate ? dateObj.toLocaleDateString(locale, { weekday: 'short', month: 'short', day: 'numeric' }) : t('common.eventDate'),
+        time: validDate ? dateObj.toLocaleTimeString(locale, { hour: 'numeric', minute: '2-digit', hour12: true }) : '',
         location: event.venue || event.address?.formatted,
-        category: event.category || 'Event',
+        category: event.category || t('common.event'),
         price: priceDisplay,
         spotsLeft: totalSpots,
         image: event.coverImage || event.flyers[0] || 'https://via.placeholder.com/300x200',
@@ -417,6 +419,58 @@ const HomeScreen = ({ navigation }) => {
   const freeEvents = formatEventsForDisplay(getFreeEvents().slice(0, 10));
   const paidEvents = formatEventsForDisplay(getPaidEvents().slice(0, 10));
 
+  const feedEvents = useMemo(() => {
+    const all = formatEventsForDisplay([...getUpcomingEvents(), ...getLiveEvents()]
+      .filter(e => e.showOnExplore !== false)
+      .sort((a, b) => new Date(a.date) - new Date(b.date)));
+    if (activeCategory === 'Discover') return all;
+    return all.filter(e =>
+      e.category?.toLowerCase() === activeCategory.toLowerCase()
+    );
+  }, [events, activeCategory, locale, t]);
+
+  const feedLoopCount = feedEvents.length;
+  const endlessFeedEvents = useMemo(() => {
+    if (feedLoopCount <= 1) return feedEvents;
+    return [...feedEvents, ...feedEvents, ...feedEvents];
+  }, [feedEvents, feedLoopCount]);
+
+  useEffect(() => {
+    if (feedLoopCount <= 1 || !feedListRef.current) return undefined;
+    const timer = setTimeout(() => {
+      feedListRef.current?.scrollToOffset({
+        offset: feedLoopCount * feedItemHeight,
+        animated: false,
+      });
+    }, 0);
+    return () => clearTimeout(timer);
+  }, [activeCategory, feedLoopCount, feedItemHeight]);
+
+  const handleFeedScrollEnd = (e) => {
+    if (feedLoopCount <= 1 || isLoopJumpingRef.current) return;
+
+    const offsetY = e.nativeEvent.contentOffset.y;
+    const index = Math.round(offsetY / feedItemHeight);
+    let jumpToIndex = null;
+
+    if (index < feedLoopCount) {
+      jumpToIndex = index + feedLoopCount;
+    } else if (index >= feedLoopCount * 2) {
+      jumpToIndex = index - feedLoopCount;
+    }
+
+    if (jumpToIndex == null) return;
+
+    isLoopJumpingRef.current = true;
+    feedListRef.current?.scrollToOffset({
+      offset: jumpToIndex * feedItemHeight,
+      animated: false,
+    });
+    requestAnimationFrame(() => {
+      isLoopJumpingRef.current = false;
+    });
+  };
+
   // Debug logging
   console.log('🏠 HomeScreen Location Debug:', {
     locationPermission,
@@ -437,28 +491,66 @@ const HomeScreen = ({ navigation }) => {
       const result = await requestLocationPermission();
       if (!result.granted) {
         Alert.alert(
-          'Location Access',
-          'To show events near you, please enable location access in your device settings.',
-          [{ text: 'OK' }]
+          t('home.alert.location.title'),
+          t('home.alert.location.message'),
+          [{ text: t('common.ok') }]
         );
       }
     }
   };
 
-  useEffect(() => {
-    Animated.parallel([
-      Animated.timing(fadeAnim, {
-        toValue: 1,
-        duration: 600,
-        useNativeDriver: true,
-      }),
-      Animated.timing(slideAnim, {
-        toValue: 0,
-        duration: 600,
-        useNativeDriver: true,
-      }),
-    ]).start();
-  }, []);
+  const searchCities = async (query) => {
+    if (!query || query.length < 2) {
+      setLocationSuggestions([]);
+      return;
+    }
+    setLocationSearching(true);
+    try {
+      const GOOGLE_KEY = process.env.EXPO_PUBLIC_GOOGLE_MAPS_API_KEY;
+      const response = await fetch(
+        `https://maps.googleapis.com/maps/api/place/autocomplete/json?input=${encodeURIComponent(query)}&types=(cities)&language=en&key=${GOOGLE_KEY}`
+      );
+      const data = await response.json();
+      const seen = new Set();
+      const cities = (data.predictions ?? [])
+        .map(item => {
+          const parts = item.description.split(', ');
+          const city  = parts[0];
+          const state = parts[1];
+          const country = parts[parts.length - 1];
+          return { id: item.place_id, city, state, country, display: item.description };
+        })
+        .filter(item => {
+          if (!item.city || seen.has(item.city)) return false;
+          seen.add(item.city);
+          return true;
+        });
+      setLocationSuggestions(cities);
+    } catch (e) {
+      setLocationSuggestions([]);
+    } finally {
+      setLocationSearching(false);
+    }
+  };
+
+  const handleLocationSearchChange = (text) => {
+    setLocationSearch(text);
+    if (locationSearchTimeout.current) clearTimeout(locationSearchTimeout.current);
+    locationSearchTimeout.current = setTimeout(() => searchCities(text), 350);
+  };
+
+  const handleSelectCity = (suggestion) => {
+    setSelectedCity(suggestion.city);
+    closeLocationSheet();
+  };
+
+  const handleUseCurrentLocation = async () => {
+    closeLocationSheet();
+    setSelectedCity(null);
+    await requestLocationPermission();
+  };
+
+  const displayCity = selectedCity || userLocation?.city || t('home.location.yourCity');
 
   const handleSearch = (text) => {
     setSearchQuery(text);
@@ -491,17 +583,17 @@ const HomeScreen = ({ navigation }) => {
     navigation.navigate('Explore', { filter });
   };
 
-  const renderEventCard = ({ item: event, index }) => (
-    <EventCard 
-      event={event} 
-      theme={theme} 
+  const renderEventCard = ({ item: event }) => (
+    <EventCard
+      event={event}
       onPress={() => handleEventPress(event)}
-      index={index}
       animatedValue={fadeAnim}
+      cardWidth={(width - 48) / 2}
     />
   );
 
   const EventSection = ({ title, events, onSeeAll, emptyMessage, emptySubtext }) => {
+    const { t: tSection } = useLanguage();
     // Only render the section if there are events
     if (!events || events.length === 0) {
       return null;
@@ -518,7 +610,7 @@ const HomeScreen = ({ navigation }) => {
             onPress={onSeeAll}
           >
             <Text style={[styles.seeAllText, { color: theme.colors.textSecondary }]}>
-              See All
+              {tSection('common.seeAll')}
             </Text>
             <Icon
               name="chevron-right"
@@ -543,400 +635,138 @@ const HomeScreen = ({ navigation }) => {
   };
 
   return (
-    <SafeAreaView style={[styles.container, { backgroundColor: '#000000' }]} edges={['top']}>
+    <SafeAreaView style={[styles.container, { backgroundColor: '#000000' }]} edges={[]}>
       <StatusBar barStyle="light-content" />
-      
-      {/* Header */}
-      <View style={styles.header}>
-        <Text style={[styles.title, { color: theme.colors.text }]}>Samba</Text>
-      </View>
-      
-      <ScrollView
-        style={styles.scrollView}
-        showsVerticalScrollIndicator={false}
-        contentContainerStyle={styles.scrollContent}
+
+      {/* Always-visible status bar fill — keeps the top dark edge-to-edge */}
+      <View style={{ height: insets.top, backgroundColor: '#1a1a1a' }} />
+
+      {/* Location search panel — expands below status bar, pushes header + content down */}
+      <Animated.View
+        style={[
+          styles.locationPanel,
+          {
+            maxHeight: panelAnim.interpolate({ inputRange: [0, 1], outputRange: [0, 400] }),
+            opacity: panelAnim.interpolate({ inputRange: [0, 0.3, 1], outputRange: [0, 1, 1] }),
+          },
+        ]}
+        pointerEvents={locationOpen ? 'auto' : 'none'}
       >
-        {/* Search Bar */}
-        <Animated.View 
-          style={[
-            styles.searchContainer,
-            {
-              opacity: fadeAnim,
-              transform: [{ translateY: slideAnim }]
-            }
-          ]}
-        >
-          <View style={[styles.searchBar, { backgroundColor: theme.colors.surface }]}>
-            <Icon
-              name="search"
-              type="feather"
-              size={20}
-              color={theme.colors.textSecondary}
-              style={styles.searchIcon}
-            />
-            <TextInput
-              style={[styles.searchInput, { color: theme.colors.text }]}
-              placeholder="Search events, organizers..."
-              placeholderTextColor={theme.colors.textSecondary}
-              value={searchQuery}
-              onChangeText={handleSearch}
-            />
-          </View>
-        </Animated.View>
-
-        {/* Followed Organizers Section - Community feature at top */}
-        {Array.isArray(followedOrganizers) && followedOrganizers.length > 0 && (
-        <View style={styles.section}>
-          <View style={styles.sectionHeader}>
-            <Text style={[styles.sectionTitle, { color: theme.colors.text }]}>
-              👥 Followed Organizers
-            </Text>
-            {Array.isArray(followedOrganizers) && followedOrganizers.length > 0 && (
-              <TouchableOpacity style={styles.seeAllButton}>
-                <Text style={[styles.seeAllText, { color: theme.colors.textSecondary }]}>
-                  View All
-              </Text>
-            </TouchableOpacity>
-            )}
-          </View>
-
-          {Array.isArray(followedOrganizers) && followedOrganizers.length > 0 ? (
-          <ScrollView
-              horizontal
-              showsHorizontalScrollIndicator={false}
-              contentContainerStyle={styles.organizersList}
-          >
-              {/* Debug logging */}
-              {console.log('🐛 HomeScreen Debug:', {
-                followedOrganizers,
-                followedOrganizersType: typeof followedOrganizers,
-                followedOrganizersLength: followedOrganizers?.length,
-                firstFollowed: followedOrganizers?.[0],
-                totalEvents: events.length,
-                sampleEvents: events.slice(0, 3).map(e => ({
-                  title: e.title,
-                  organizer: e.organizer,
-                  organizerId: e.organizerId
-                }))
-              })}
-              {followedOrganizers.map((organizerKey, index) => {
-                console.log('🔍 Processing followed organizer:', organizerKey);
-                
-                // Find events by this organizer with comprehensive matching
-                const organizerEvents = events.filter(event => {
-                  const eventOrganizerName = typeof event.organizer === 'string' 
-                    ? event.organizer 
-                    : event.organizer?.name || event.organizer?.organizationName;
-                  const eventOrganizerId = event.organizerId || event.organizer?.id;
-                  
-                  // Multiple matching criteria
-                  const matches = eventOrganizerName === organizerKey || 
-                         eventOrganizerId === organizerKey ||
-                         event.organizer?.organizationName === organizerKey ||
-                         (typeof event.organizer === 'object' && event.organizer?.name === organizerKey) ||
-                         // Case insensitive matching
-                         (eventOrganizerName && eventOrganizerName.toLowerCase() === organizerKey.toLowerCase());
-                  
-                  if (matches) {
-                    console.log('✅ Found matching event:', event.title, 'for organizer:', organizerKey);
-                  }
-                  
-                  return matches;
-                });
-
-                console.log('📊 Found', organizerEvents.length, 'events for organizer:', organizerKey);
-
-                // Get organizer info from first event or try to find from all events
-                const firstEvent = organizerEvents[0];
-                let organizerInfo = firstEvent?.organizer || {};
-                
-                // If no events found, try to find organizer info from other events
-                if (organizerEvents.length === 0) {
-                  console.log('⚠️ No events found for organizer, searching all events...');
-                  const allOrganizerInstances = events
-                    .map(event => event.organizer)
-                    .filter(org => org && (
-                      (typeof org === 'string' && org === organizerKey) ||
-                      (typeof org === 'object' && (org.name === organizerKey || org.organizationName === organizerKey || org.id === organizerKey))
-                    ));
-                  
-                  if (allOrganizerInstances.length > 0) {
-                    organizerInfo = allOrganizerInstances[0];
-                    console.log('🔍 Found organizer info from other events:', organizerInfo);
-                  }
-                }
-                
-                // Create robust organizer data
-                const organizerName = typeof organizerInfo === 'string' 
-                  ? organizerInfo 
-                  : organizerInfo.organizationName || organizerInfo.name || organizerKey;
-                
-                // Don't show generic fallback data if we can't find the real organizer
-                if (organizerName === organizerKey && organizerEvents.length === 0 && (
-                    organizerKey.includes('Event Organizer') || 
-                    organizerKey === 'Event Organizer' ||
-                    organizerKey.length > 20 // Likely a hash
-                  )) {
-                  console.log('❌ Skipping generic organizer:', organizerKey);
-                  return null;
-                }
-                
-                const organizerData = {
-                  id: organizerKey,
-                  name: organizerName,
-                  eventCount: organizerEvents.length,
-                  followers: organizerFollowers[organizerKey] || 0, // Real follower count
-                  verified: organizerEvents.length > 0,
-                  avatar: organizerInfo.profilePicture || organizerInfo.avatar || organizerInfo.partyLogo,
-                  coverImage: firstEvent?.coverImage || firstEvent?.flyers?.[0]
-                };
-                
-                console.log('📋 Final organizer data:', organizerData);
-                
-                return (
-                  <FollowedOrganizerCard
-                    key={organizerKey}
-                    organizer={organizerData}
-                    onPress={() => handleOrganizerPress(organizerData)}
-                    theme={theme}
-                    animatedValue={fadeAnim}
-                  />
-                );
-              }).filter(Boolean)}
-          </ScrollView>
-          ) : (
-            <View style={styles.emptyStateContainer}>
-              <LinearGradient
-                colors={['rgba(255,255,255,0.1)', 'rgba(255,255,255,0.05)']}
-                style={styles.emptyStateCard}
-              >
-                <View style={styles.emptyIconContainer}>
-                  <Icon
-                    name="users"
-                    type="feather"
-                    size={40}
-                    color="#FFFFFF"
-                  />
-                </View>
-                <Text style={[styles.emptyStateTitle, { color: '#FFFFFF' }]}>
-                  No followed organizers
-                </Text>
-                <Text style={[styles.emptyStateSubtext, { color: 'rgba(255,255,255,0.7)' }]}>
-                  Discover and follow event organizers!
-                </Text>
-              </LinearGradient>
-            </View>
-          )}
-        </View>
-        )}
-
-        {/* Events Near You Section - Most relevant to user */}
-        {(locationPermission !== null && (
-          (locationPermission === true && displayNearbyEvents.length > 0) ||
-          (locationPermission === false && displayStateEvents.length > 0)
-        )) && (
-        <View style={styles.section}>
-          <View style={styles.sectionHeader}>
-            <Text style={[styles.sectionTitle, { color: theme.colors.text }]}>
-              {locationPermission === true && displayNearbyEvents.length > 0 
-                ? '📍 Events Near You' 
-                : locationPermission === false && displayStateEvents.length > 0
-                ? `📍 Events in ${userLocation?.state || 'Your State'}`
-                : '📍 Events Near You'}
-            </Text>
-            {locationPermission === null ? (
-              <TouchableOpacity 
-                style={styles.locationButton}
-                onPress={handleLocationRequest}
-              >
-                <Text style={[styles.locationButtonText, { color: theme.colors.textSecondary }]}>
-                  Enable Location
-                </Text>
-                <Icon
-                  name="map-pin"
-                  type="feather"
-                  size={16}
-                  color={theme.colors.textSecondary}
-                />
-              </TouchableOpacity>
-            ) : (
-              <TouchableOpacity 
-                style={styles.seeAllButton}
-                onPress={() => handleSeeAllEvents({ locationFilter: 'nearMe' })}
-              >
-                <Text style={[styles.seeAllText, { color: theme.colors.textSecondary }]}>
-                  See All
-                </Text>
-                <Icon
-                  name="chevron-right"
-                  type="feather"
-                  size={16}
-                  color={theme.colors.textSecondary}
-                />
-              </TouchableOpacity>
-            )}
-          </View>
-
-          {locationPermission === null ? (
-            <View style={styles.emptyStateContainer}>
-              <LinearGradient
-                colors={['rgba(255,255,255,0.1)', 'rgba(255,255,255,0.05)']}
-                style={styles.emptyStateCard}
-              >
-                <View style={styles.emptyIconContainer}>
-                  <Icon
-                    name="map-pin"
-                    type="feather"
-                    size={40}
-                    color="#FFFFFF"
-                  />
-                </View>
-                <Text style={[styles.emptyStateTitle, { color: '#FFFFFF' }]}>
-                  Share Your Location
-                </Text>
-                <Text style={[styles.emptyStateSubtext, { color: 'rgba(255,255,255,0.7)' }]}>
-                  Allow location access to discover events happening near you!
-                </Text>
-              </LinearGradient>
-            </View>
-          ) : (locationPermission === true && displayNearbyEvents.length > 0) || 
-                (locationPermission === false && displayStateEvents.length > 0) ? (
-            <FlatList
-              data={locationPermission === true ? displayNearbyEvents : displayStateEvents}
-              renderItem={renderEventCard}
-              keyExtractor={(item) => item.id}
-            horizontal
-            showsHorizontalScrollIndicator={false}
-              contentContainerStyle={styles.eventsList}
-              ItemSeparatorComponent={() => <View style={{ width: 16 }} />}
-              />
-          ) : (
-            <View style={styles.emptyStateContainer}>
-              <LinearGradient
-                colors={['rgba(255,255,255,0.1)', 'rgba(255,255,255,0.05)']}
-                style={styles.emptyStateCard}
-              >
-                <View style={styles.emptyIconContainer}>
-                  <Icon
-                    name="map-pin"
-                    type="feather"
-                    size={40}
-                    color="#FFFFFF"
-                  />
-                </View>
-                <Text style={[styles.emptyStateTitle, { color: '#FFFFFF' }]}>
-                  {locationPermission === true ? 'No events near you yet' : 'No events in your area yet'}
-                </Text>
-                <Text style={[styles.emptyStateSubtext, { color: 'rgba(255,255,255,0.7)' }]}>
-                  {locationPermission === true 
-                    ? 'Events within 50 miles will appear here once created!'
-                    : 'Events in your state will appear here once created!'}
-                </Text>
-              </LinearGradient>
-            </View>
-          )}
-        </View>
-        )}
-
-        {/* Today's Events Section - High urgency */}
-        <EventSection
-          title="🔥 Happening Today"
-          events={todayEvents}
-          onSeeAll={() => handleSeeAllEvents({ timeFilter: 'today' })}
-          emptyMessage="No events today"
-          emptySubtext="Check out tomorrow's events or create one for today!"
-        />
-
-        {/* Free Events Section - High appeal, barrier-free */}
-        <EventSection
-          title="🆓 Free Events"
-          events={freeEvents}
-          onSeeAll={() => handleSeeAllEvents({ priceFilter: 'free' })}
-          emptyMessage="No free events available"
-          emptySubtext="All current events require tickets, but check back soon!"
-        />
-
-        {/* Tomorrow's Events Section - Planning ahead */}
-        <EventSection
-          title="🌅 Tomorrow"
-          events={tomorrowEvents}
-          onSeeAll={() => handleSeeAllEvents({ timeFilter: 'tomorrow' })}
-          emptyMessage="No events tomorrow"
-          emptySubtext="Plan ahead and create an event for tomorrow!"
-        />
-
-        {/* This Week's Events Section - Weekly planning */}
-        <EventSection
-          title="📅 This Week"
-          events={thisWeekEvents}
-          onSeeAll={() => handleSeeAllEvents({ timeFilter: 'thisWeek' })}
-          emptyMessage="No events this week"
-          emptySubtext="This week is looking quiet, perfect time to create an event!"
-        />
-
-        {/* Featured Events Section - General discovery */}
-        {(searchQuery ? filteredEvents : displayEvents).length > 0 && (
-        <View style={styles.section}>
-          <View style={styles.sectionHeader}>
-            <Text style={[styles.sectionTitle, { color: theme.colors.text }]}>
-              Featured Events
-            </Text>
-            <TouchableOpacity 
-              style={styles.seeAllButton}
-              onPress={handleSeeAllEvents}
-            >
-              <Text style={[styles.seeAllText, { color: theme.colors.textSecondary }]}>
-                See All
-              </Text>
-              <Icon
-                name="chevron-right"
-                type="feather"
-                size={16}
-                color={theme.colors.textSecondary}
-              />
-            </TouchableOpacity>
-          </View>
-
-          <FlatList
-            data={searchQuery ? filteredEvents : displayEvents}
-            renderItem={renderEventCard}
-            keyExtractor={(item) => item.id}
-            horizontal
-            showsHorizontalScrollIndicator={false}
-            contentContainerStyle={styles.eventsList}
-            ItemSeparatorComponent={() => <View style={{ width: 16 }} />}
+        {/* Search input */}
+        <View style={styles.locationSearchBar}>
+          <Icon name="search" type="feather" size={16} color="rgba(255,255,255,0.5)" style={{ marginRight: 8 }} />
+          <TextInput
+            style={styles.locationSearchInput}
+            placeholder={t('home.location.searchPlaceholder')}
+            placeholderTextColor="rgba(255,255,255,0.4)"
+            value={locationSearch}
+            onChangeText={handleLocationSearchChange}
+            autoFocus={locationOpen}
           />
+          {locationSearching && <ActivityIndicator size="small" color="#FF4B8C" />}
         </View>
+
+        {/* Suggestions */}
+        {locationSuggestions.length > 0 && (
+          <ScrollView
+            style={styles.suggestionsList}
+            keyboardShouldPersistTaps="handled"
+            showsVerticalScrollIndicator={false}
+          >
+            {locationSuggestions.map((item) => (
+              <TouchableOpacity
+                key={item.id}
+                style={styles.suggestionItem}
+                onPress={() => handleSelectCity(item)}
+                activeOpacity={0.7}
+              >
+                <View style={{ flex: 1 }}>
+                  <Text style={styles.suggestionCity}>{item.city}</Text>
+                  <Text style={styles.suggestionSub} numberOfLines={1}>{item.display}</Text>
+                </View>
+                <Icon name="arrow-up-right" type="feather" size={14} color="rgba(255,255,255,0.4)" />
+              </TouchableOpacity>
+            ))}
+          </ScrollView>
         )}
 
-        {/* Paid Events Section - Premium experiences */}
-        <EventSection
-          title="💰 Premium Events"
-          events={paidEvents}
-          onSeeAll={() => handleSeeAllEvents({ priceFilter: 'paid' })}
-          emptyMessage="No premium events available"
-          emptySubtext="All current events are free, check out the free section!"
-        />
+        {/* Use Current Location */}
+        <TouchableOpacity style={styles.useCurrentLocation} onPress={handleUseCurrentLocation} activeOpacity={0.7}>
+          <Icon name="crosshair" type="feather" size={18} color="#FFFFFF" style={{ marginRight: 10 }} />
+          <Text style={styles.useCurrentLocationText}>{t('home.location.useCurrent')}</Text>
+        </TouchableOpacity>
 
-        {/* No Events Available Fallback */}
-        {!searchQuery && 
-         (!Array.isArray(followedOrganizers) || followedOrganizers.length === 0) &&
-         !(locationPermission !== null && (
-           (locationPermission === true && displayNearbyEvents.length > 0) ||
-           (locationPermission === false && displayStateEvents.length > 0)
-         )) &&
-         todayEvents.length === 0 &&
-         freeEvents.length === 0 &&
-         tomorrowEvents.length === 0 &&
-         thisWeekEvents.length === 0 &&
-         displayEvents.length === 0 &&
-         paidEvents.length === 0 && (
-          <View style={styles.noEventsContainer}>
-            <Text style={styles.noEventsText}>No Events Available</Text>
+        {/* Pull handle */}
+        <View style={styles.sheetHandle} />
+      </Animated.View>
+
+      {/* Header — always paddingTop: 12, panel above handles the safe area */}
+      <View style={[styles.header, { paddingTop: 12 }]}>
+        <Text style={styles.appNameText}>{t('brand.name')}</Text>
+
+        {/* Location picker - right side */}
+        <TouchableOpacity
+          style={styles.locationPicker}
+          activeOpacity={0.7}
+          onPress={toggleLocationSheet}
+        >
+          <Text style={styles.locationCity}>{displayCity}</Text>
+          <Icon
+            name={locationOpen ? 'chevron-up' : 'chevron-down'}
+            type="feather"
+            size={14}
+            color="#FF4B8C"
+            style={{ marginLeft: 2 }}
+          />
+        </TouchableOpacity>
+      </View>
+
+      {/* TikTok-style feed — one event per screen, endless loop */}
+      <FlatList
+        ref={feedListRef}
+        data={endlessFeedEvents}
+        keyExtractor={(item, index) => `${item.id}-${index}`}
+        initialScrollIndex={feedLoopCount > 1 ? feedLoopCount : 0}
+        pagingEnabled
+        snapToInterval={feedItemHeight}
+        snapToAlignment="start"
+        decelerationRate="fast"
+        disableIntervalMomentum
+        bounces={false}
+        overScrollMode="never"
+        onMomentumScrollEnd={handleFeedScrollEnd}
+        onScrollEndDrag={handleFeedScrollEnd}
+        getItemLayout={(_, index) => ({
+          length: feedItemHeight,
+          offset: feedItemHeight * index,
+          index,
+        })}
+        renderItem={({ item: event }) => (
+          <View style={[styles.feedPage, { height: feedItemHeight }]}>
+            <EventCard
+              event={event}
+              onPress={() => handleEventPress(event)}
+              animatedValue={fadeAnim}
+              cardWidth={feedCardWidth}
+              aspectRatio={feedCardAspect}
+              bottomMargin={0}
+            />
           </View>
         )}
-
-      </ScrollView>
+        showsVerticalScrollIndicator={false}
+        ListEmptyComponent={
+          <View style={[styles.emptyStateContainer, { height: feedItemHeight }]}>
+            <Text style={[styles.emptyStateTitle, { color: '#FFFFFF', marginTop: 60 }]}>
+              {activeCategory === 'Discover'
+                ? t('home.empty.noEvents')
+                : t('home.empty.noCategoryEvents', { category: t(CATEGORY_KEYS[activeCategory]) })}
+            </Text>
+            <Text style={[styles.emptyStateSubtext, { color: 'rgba(255,255,255,0.5)', textAlign: 'center', marginTop: 8 }]}>
+              {t('home.empty.checkBackSoon')}
+            </Text>
+          </View>
+        }
+      />
       
       <CustomNavBar activeScreen="Home" />
     </SafeAreaView>
@@ -1060,21 +890,22 @@ const styles = StyleSheet.create({
     paddingRight: 8,
   },
   eventCard: {
-    width: width * 0.55,
-    height: 200,
-    borderRadius: 20,
-    marginRight: 12,
+    width: width - 32,
+    height: 320,
+    borderRadius: 24,
+    marginBottom: 16,
     overflow: 'hidden',
     position: 'relative',
+    alignSelf: 'center',
     ...Platform.select({
       ios: {
-        shadowColor: 'rgba(0, 0, 0, 0.4)',
+        shadowColor: 'rgba(0, 0, 0, 0.5)',
         shadowOffset: { width: 0, height: 12 },
-        shadowOpacity: 0.3,
+        shadowOpacity: 0.4,
         shadowRadius: 20,
       },
       android: {
-        elevation: 12,
+        elevation: 14,
       },
     }),
   },
@@ -1105,22 +936,38 @@ const styles = StyleSheet.create({
     alignItems: 'flex-start',
   },
   dateBadge: {
-    backgroundColor: 'rgba(0, 0, 0, 0.7)',
-    paddingHorizontal: 8,
-    paddingVertical: 4,
+    backgroundColor: 'rgba(0,0,0,0.65)',
+    paddingHorizontal: 10,
+    paddingVertical: 5,
     borderRadius: 12,
   },
+  spotsText: {
+    fontSize: 10,
+    fontWeight: '600',
+    color: '#FFFFFF',
+    textShadowColor: 'rgba(0,0,0,0.5)',
+    textShadowOffset: { width: 0, height: 1 },
+    textShadowRadius: 2,
+  },
+  spotsTextSoldOut: {
+    color: 'rgba(255,255,255,0.7)',
+  },
   eventBottomContent: {
-    gap: 4,
+    gap: 6,
   },
   eventLocationRow: {
     flexDirection: 'row',
     alignItems: 'center',
   },
   eventLocation: {
-    fontSize: 11,
-    color: 'rgba(255, 255, 255, 0.8)',
+    fontSize: 12,
+    color: 'rgba(255,255,255,0.8)',
     flex: 1,
+  },
+  eventDateTime: {
+    fontSize: 12,
+    color: 'rgba(255,255,255,0.6)',
+    fontWeight: '500',
   },
   eventFooterOverlay: {
     flexDirection: 'row',
@@ -1144,6 +991,7 @@ const styles = StyleSheet.create({
     textShadowColor: 'rgba(0, 0, 0, 0.5)',
     textShadowOffset: { width: 0, height: 1 },
     textShadowRadius: 2,
+    textTransform: 'uppercase',
   },
   eventDetails: {},
   detailRow: {
@@ -1167,13 +1015,6 @@ const styles = StyleSheet.create({
     paddingHorizontal: 8,
     paddingVertical: 4,
     borderRadius: 12,
-  },
-  spotsText: {
-    fontSize: 10,
-    fontWeight: '600',
-    textShadowColor: 'rgba(0, 0, 0, 0.5)',
-    textShadowOffset: { width: 0, height: 1 },
-    textShadowRadius: 2,
   },
   categoryPrice: {
     flexDirection: 'row',
@@ -1231,19 +1072,160 @@ const styles = StyleSheet.create({
     textShadowRadius: 3,
   },
   header: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
     paddingHorizontal: 24,
-    paddingTop: 16,
-    paddingBottom: 8,
-    alignItems: 'flex-start',
+    paddingBottom: 18,
+    backgroundColor: '#1a1a1a',
+    borderBottomLeftRadius: 28,
+    borderBottomRightRadius: 28,
+    marginBottom: 8,
+    ...Platform.select({
+      ios: {
+        shadowColor: '#000',
+        shadowOffset: { width: 0, height: 6 },
+        shadowOpacity: 0.35,
+        shadowRadius: 10,
+      },
+      android: {
+        elevation: 10,
+      },
+    }),
+  },
+  appNameText: {
+    fontSize: 26,
+    fontWeight: '800',
+    color: '#FFFFFF',
+    letterSpacing: 1,
+  },
+  locationPicker: {
+    flexDirection: 'row',
+    alignItems: 'center',
+  },
+  locationCity: {
+    fontSize: 22,
+    fontWeight: '700',
+    color: '#FF4B8C',
+    letterSpacing: 0.3,
+    marginRight: 2,
   },
   title: {
     fontSize: 36,
     fontWeight: '800',
     letterSpacing: 1,
   },
+  locationPanel: {
+    backgroundColor: '#1a1a1a',
+    overflow: 'hidden',
+  },
+  sheetHandle: {
+    width: 36,
+    height: 4,
+    borderRadius: 2,
+    backgroundColor: 'rgba(255,255,255,0.15)',
+    alignSelf: 'center',
+    marginTop: 8,
+    marginBottom: 10,
+  },
+  locationSearchBar: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingHorizontal: 16,
+    paddingVertical: 14,
+    borderBottomWidth: 1,
+    borderBottomColor: 'rgba(255,255,255,0.08)',
+  },
+  locationSearchInput: {
+    flex: 1,
+    fontSize: 16,
+    color: '#FFFFFF',
+    fontWeight: '500',
+  },
+  suggestionsList: {
+    maxHeight: 360,
+    borderBottomWidth: 1,
+    borderBottomColor: 'rgba(255,255,255,0.08)',
+  },
+  suggestionItem: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingHorizontal: 20,
+    paddingVertical: 16,
+    borderBottomWidth: 1,
+    borderBottomColor: 'rgba(255,255,255,0.05)',
+  },
+  suggestionCity: {
+    fontSize: 16,
+    fontWeight: '600',
+    color: '#FFFFFF',
+    marginBottom: 2,
+  },
+  suggestionSub: {
+    fontSize: 12,
+    color: 'rgba(255,255,255,0.4)',
+  },
+  useCurrentLocation: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingVertical: 16,
+    paddingHorizontal: 16,
+  },
+  useCurrentLocationText: {
+    fontSize: 15,
+    fontWeight: '600',
+    color: '#FFFFFF',
+  },
   scrollContent: {
     paddingHorizontal: 16,
-    paddingBottom: 700, // Reduced padding for nav bar
+    paddingBottom: 700,
+  },
+  categoriesScroll: {
+    flexShrink: 0,
+    marginTop: 4,
+  },
+  categoriesContent: {
+    paddingHorizontal: 16,
+    paddingVertical: 12,
+    alignItems: 'center',
+    flexDirection: 'row',
+  },
+  categoryPill: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingHorizontal: 14,
+    paddingVertical: 8,
+    borderRadius: 20,
+    backgroundColor: 'rgba(255,255,255,0.07)',
+    borderWidth: 1,
+    borderColor: 'rgba(255,255,255,0.12)',
+    marginRight: 10,
+  },
+  categoryPillActive: {
+    backgroundColor: 'rgba(255,75,140,0.18)',
+    borderColor: '#FF4B8C',
+  },
+  categoryEmoji: {
+    fontSize: 15,
+    marginRight: 6,
+  },
+  categoryLabel: {
+    fontSize: 14,
+    fontWeight: '600',
+    color: 'rgba(255,255,255,0.6)',
+  },
+  categoryLabelActive: {
+    color: '#FF4B8C',
+  },
+  eventsListVertical: {
+    paddingHorizontal: 16,
+    paddingTop: 4,
+    paddingBottom: 120,
+  },
+  feedPage: {
+    justifyContent: 'center',
+    alignItems: 'center',
   },
   searchContainer: {
     marginBottom: 16,

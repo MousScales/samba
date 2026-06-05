@@ -1,26 +1,41 @@
 import React, { useRef, useEffect, useState } from 'react';
 import { StyleSheet, View, ScrollView, TouchableOpacity, Image, Dimensions, Platform, Animated, Alert, Modal } from 'react-native';
 import { Text, useTheme, Icon, Avatar } from '@rneui/themed';
-import { SafeAreaView } from 'react-native-safe-area-context';
+import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 import { LinearGradient } from 'expo-linear-gradient';
 import CustomNavBar from '../components/CustomNavBar';
 import { useAuth } from '../context/AuthContext';
+import { useLanguage } from '../context/LanguageContext';
 import { useEvents } from '../context/EventsContext';
 import { formatCount } from '../utils/formatNumbers';
+import { useSubtleFadeEntrance } from '../utils/useSubtleEntrance';
 
 const { width } = Dimensions.get('window');
+
+// ── Reusable menu row ─────────────────────────────────────────────────────────
+const MenuItem = ({ icon, label, onPress, danger }) => (
+  <TouchableOpacity style={styles.menuItem} onPress={onPress} activeOpacity={0.7}>
+    <View style={[styles.menuIconBox, danger && styles.menuIconBoxDanger]}>
+      <Icon name={icon} type="feather" size={17} color={danger ? '#FF4B8C' : '#FFFFFF'} />
+    </View>
+    <Text style={[styles.menuLabel, danger && { color: '#FF4B8C' }]}>{label}</Text>
+    <Icon name="chevron-right" type="feather" size={18} color="rgba(255,255,255,0.3)" />
+  </TouchableOpacity>
+);
+
+const MenuDivider = () => <View style={styles.menuDivider} />;
 
 const AnimatedSectionTitle = ({ title, animatedValue }) => {
   const { theme } = useTheme();
   
   const translateX = animatedValue.interpolate({
     inputRange: [0, 1],
-    outputRange: [-20, 0],
+    outputRange: [-6, 0],
   });
   
   const opacity = animatedValue.interpolate({
-    inputRange: [0, 0.5, 1],
-    outputRange: [0, 0.5, 1],
+    inputRange: [0, 1],
+    outputRange: [0, 1],
   });
   
   return (
@@ -41,12 +56,12 @@ const ProfileButton = ({ title, onPress, animatedValue, width = '100%', marginHo
   
   const translateY = animatedValue.interpolate({
     inputRange: [0, 1],
-    outputRange: [50, 0],
+    outputRange: [8, 0],
   });
   
   const opacity = animatedValue.interpolate({
-    inputRange: [0, 0.3, 1],
-    outputRange: [0, 0.5, 1],
+    inputRange: [0, 1],
+    outputRange: [0, 1],
   });
   
   return (
@@ -71,15 +86,16 @@ const ProfileButton = ({ title, onPress, animatedValue, width = '100%', marginHo
 
 const EventItem = ({ event, onPress, animatedValue, isPast = false, isEditable = false, userRole }) => {
   const { theme } = useTheme();
+  const { t } = useLanguage();
   
   const translateY = animatedValue.interpolate({
     inputRange: [0, 1],
-    outputRange: [30, 0],
+    outputRange: [6, 0],
   });
   
   const opacity = animatedValue.interpolate({
-    inputRange: [0, 0.5, 1],
-    outputRange: [0, 0.5, 1],
+    inputRange: [0, 1],
+    outputRange: [0, 1],
   });
 
   // For past events, still use TouchableOpacity but only for hosted events (userRole === 'provider')
@@ -116,15 +132,15 @@ const EventItem = ({ event, onPress, animatedValue, isPast = false, isEditable =
             <Text style={styles.dateText}>
               {(() => {
                 try {
-                  if (!event.date) return 'TBD';
+                  if (!event.date) return t('common.tbd');
                   if (typeof event.date === 'string') return event.date;
                   const dateObj = event.date instanceof Date ? event.date : new Date(event.date);
-                  return isNaN(dateObj.getTime()) ? 'TBD' : dateObj.toLocaleDateString('en-US', {
+                  return isNaN(dateObj.getTime()) ? t('common.tbd') : dateObj.toLocaleDateString('en-US', {
                     month: 'short',
                     day: 'numeric'
                   });
                 } catch (error) {
-                  return 'TBD';
+                  return t('common.tbd');
                 }
               })()}
             </Text>
@@ -140,7 +156,7 @@ const EventItem = ({ event, onPress, animatedValue, isPast = false, isEditable =
           
           {isPast && (
             <View style={styles.pastEventBadge}>
-              <Text style={styles.pastEventText}>Past Event</Text>
+              <Text style={styles.pastEventText}>{t('profile.event.pastBadge')}</Text>
             </View>
           )}
         </View>
@@ -167,15 +183,16 @@ const EventItem = ({ event, onPress, animatedValue, isPast = false, isEditable =
 
 const CreateEventButton = ({ onPress, animatedValue }) => {
   const { theme } = useTheme();
+  const { t } = useLanguage();
   
   const translateY = animatedValue.interpolate({
     inputRange: [0, 1],
-    outputRange: [30, 0],
+    outputRange: [6, 0],
   });
   
   const opacity = animatedValue.interpolate({
-    inputRange: [0, 0.5, 1],
-    outputRange: [0, 0.5, 1],
+    inputRange: [0, 1],
+    outputRange: [0, 1],
   });
   
   return (
@@ -194,7 +211,7 @@ const CreateEventButton = ({ onPress, animatedValue }) => {
           <Icon name="plus" type="feather" size={30} color={theme.colors.textSecondary} />
     </View>
         <Text style={[styles.createEventText, { color: theme.colors.textSecondary }]}>
-          Create Event
+          {t('profile.button.createEvent')}
         </Text>
   </TouchableOpacity>
     </Animated.View>
@@ -204,15 +221,16 @@ const CreateEventButton = ({ onPress, animatedValue }) => {
 // New component for organizer items
 const OrganizerItem = ({ organizer, onPress, animatedValue }) => {
   const { theme } = useTheme();
+  const { t } = useLanguage();
   
   const translateY = animatedValue.interpolate({
     inputRange: [0, 1],
-    outputRange: [30, 0],
+    outputRange: [6, 0],
   });
   
   const opacity = animatedValue.interpolate({
-    inputRange: [0, 0.5, 1],
-    outputRange: [0, 0.5, 1],
+    inputRange: [0, 1],
+    outputRange: [0, 1],
   });
   
   return (
@@ -268,13 +286,13 @@ const OrganizerItem = ({ organizer, onPress, animatedValue }) => {
               <View style={styles.organizerStat}>
                 <Icon name="calendar" type="feather" size={12} color="#FFD700" />
                 <Text style={styles.organizerStatText}>
-                  {formatCount(organizer.upcomingEventsCount || 0)} upcoming
+                  {t('profile.organizer.upcomingCount', { count: formatCount(organizer.upcomingEventsCount || 0) })}
                 </Text>
               </View>
               <View style={styles.organizerStat}>
                 <Icon name="users" type="feather" size={12} color="#4CAF50" />
                 <Text style={styles.organizerStatText}>
-                  {formatCount(organizer.totalEvents || 0)} total events
+                  {t('profile.organizer.totalEvents', { count: formatCount(organizer.totalEvents || 0) })}
                 </Text>
               </View>
             </View>
@@ -292,17 +310,27 @@ const OrganizerItem = ({ organizer, onPress, animatedValue }) => {
 
 const ProfileScreen = ({ navigation }) => {
   const { theme } = useTheme();
+  const insets = useSafeAreaInsets();
   const { user, switchMode } = useAuth();
+  const { t } = useLanguage();
   const { followedOrganizers, events, getUserTickets, getEventsByOrganizer, getPastEvents, getUpcomingEvents, getLiveEvents, loading } = useEvents();
   const profileAnimation = useRef(new Animated.Value(0)).current;
   const upcomingEventsAnimation = useRef(new Animated.Value(0)).current;
   const pastEventsAnimation = useRef(new Animated.Value(0)).current;
   const organizerStatsAnimation = useRef(new Animated.Value(0)).current;
   const organizersAnimation = useRef(new Animated.Value(0)).current;
+  useSubtleFadeEntrance(
+    profileAnimation,
+    organizerStatsAnimation,
+    upcomingEventsAnimation,
+    organizersAnimation,
+    pastEventsAnimation
+  );
   const [activeTab, setActiveTab] = useState('tickets');
   const roleToggleAnim = useRef(new Animated.Value(1)).current;
   const [showEventPopup, setShowEventPopup] = useState(false);
   const [selectedEvent, setSelectedEvent] = useState(null);
+  const [showPurchases, setShowPurchases] = useState(false);
   
   const isProvider = user?.role === 'provider';
   const currentMode = user?.currentMode || 'attendee';
@@ -436,7 +464,7 @@ const ProfileScreen = ({ navigation }) => {
       name: event.title,
       title: event.title,
       date: formattedDate,
-      location: event.venue || event.address?.formatted || 'Location TBD',
+      location: event.venue || event.address?.formatted || t('common.locationTbd'),
       image: event.coverImage || event.flyers?.[0] || 'https://via.placeholder.com/300x200',
       attendees: event.bookedSpots || 0,
       hasTicket: false
@@ -568,12 +596,12 @@ const ProfileScreen = ({ navigation }) => {
       const organizerData = {
         id: organizerKey,
         name: organizerInfo.organizationName || organizerInfo.name || organizerKey,
-        title: organizerInfo.description || organizerInfo.bio || firstEvent?.organizerBio || "Event Organizer",
+        title: organizerInfo.description || organizerInfo.bio || firstEvent?.organizerBio || t('common.eventOrganizer'),
         avatar: organizerInfo.profilePicture || organizerInfo.avatar || organizerInfo.partyLogo || firstEvent?.organizerAvatar || `https://ui-avatars.com/api/?name=${encodeURIComponent(organizerKey)}&background=FF4B8C&color=fff&size=200`,
         upcomingEventsCount: upcomingEvents.length,
         totalEvents: organizerEvents.length,
         coverImage: firstEvent?.coverImage || firstEvent?.flyers?.[0] || firstEvent?.image || 'https://images.unsplash.com/photo-1501281668745-f7f57925c3b4?ixlib=rb-1.2.1&auto=format&fit=crop&w=1350&q=80',
-        location: organizerInfo.location || firstEvent?.venue || 'Event Organizer',
+        location: organizerInfo.location || firstEvent?.venue || t('common.eventOrganizer'),
         followers: organizerInfo.followers || 0
       };
       
@@ -589,10 +617,10 @@ const ProfileScreen = ({ navigation }) => {
   
   // Use real user data or fallback to basic structure
   const userData = {
-    name: user?.name || 'User',
-    bio: user?.bio || 'Add a bio to tell others about yourself!',
-    avatar: user?.profilePicture || user?.providerInfo?.partyLogo,
-    location: user?.location || 'Add your location',
+    name: user?.name || t('profile.fallback.user'),
+    bio: user?.bio || t('profile.fallback.bio'),
+    avatar: user?.profilePicture,
+    location: user?.location || t('profile.fallback.location'),
     stats: {
       friends: user?.stats?.friendsCount || 0,
       eventsAttended: user?.stats?.eventsAttended || 0,
@@ -608,10 +636,10 @@ const ProfileScreen = ({ navigation }) => {
     followedOrganizers: loading ? [] : getFollowedOrganizersData(),
     
     organizer: {
-      name: user?.providerInfo?.organizationName || user?.name || 'Event Organization',
-      title: user?.providerInfo?.description || 'Event Organizer',
-      avatar: user?.profilePicture || user?.providerInfo?.partyLogo,
-      bio: user?.providerInfo?.description || 'Professional event organizer creating amazing experiences.',
+      name: user?.providerInfo?.organizationName || user?.name || t('profile.fallback.orgName'),
+      title: user?.providerInfo?.description || t('common.eventOrganizer'),
+      avatar: user?.providerInfo?.partyLogo,
+      bio: user?.providerInfo?.description || t('profile.fallback.orgBio'),
       stats: {
         events: userCreatedEvents.length,
         attendees: userCreatedEvents.reduce((sum, event) => sum + (event.bookedSpots || 0), 0),
@@ -652,46 +680,16 @@ const ProfileScreen = ({ navigation }) => {
       pastEvents: userData.pastEvents.length
     });
   }, [user, currentMode, followedOrganizers, events, upcomingTickets, pastTickets]);
-  
-  useEffect(() => {
-    Animated.stagger(150, [
-      Animated.timing(profileAnimation, {
-        toValue: 1,
-        duration: 600,
-        useNativeDriver: true,
-      }),
-      Animated.timing(organizerStatsAnimation, {
-        toValue: 1,
-        duration: 600,
-        useNativeDriver: true,
-      }),
-      Animated.timing(upcomingEventsAnimation, {
-        toValue: 1,
-        duration: 600,
-        useNativeDriver: true,
-      }),
-      Animated.timing(organizersAnimation, {
-        toValue: 1,
-        duration: 600,
-        useNativeDriver: true,
-      }),
-      Animated.timing(pastEventsAnimation, {
-        toValue: 1,
-        duration: 600,
-        useNativeDriver: true,
-      }),
-    ]).start();
-  }, []);
 
   // Toggle between attendee and provider modes with animation
   const toggleUserRole = async () => {
     if (!isProvider) {
       Alert.alert(
-        'Not a Provider',
-        'You need to sign up as an event provider first. Go to Settings to become a provider.',
+        t('profile.alert.notProvider.title'),
+        t('profile.alert.notProvider.message'),
         [
-          { text: 'Cancel', style: 'cancel' },
-          { text: 'Go to Settings', onPress: () => navigation.navigate('Settings') }
+          { text: t('common.cancel'), style: 'cancel' },
+          { text: t('profile.alert.notProvider.goToSettings'), onPress: () => navigation.navigate('Settings') }
         ]
       );
       return;
@@ -715,7 +713,7 @@ const ProfileScreen = ({ navigation }) => {
         useNativeDriver: true,
       }).start();
         } else {
-          Alert.alert('Error', result.message);
+          Alert.alert(t('common.error'), result.message);
           // Scale back up even on error
           Animated.timing(roleToggleAnim, {
             toValue: 1,
@@ -724,7 +722,7 @@ const ProfileScreen = ({ navigation }) => {
           }).start();
         }
       } catch (error) {
-        Alert.alert('Error', 'Failed to switch mode');
+        Alert.alert(t('common.error'), t('settings.error.switchMode'));
         // Scale back up on error
         Animated.timing(roleToggleAnim, {
           toValue: 1,
@@ -761,7 +759,7 @@ const ProfileScreen = ({ navigation }) => {
 
   // Handle edit for organizer events
   const handleEditEvent = (event) => {
-    navigation.navigate('Create', { editMode: true, event });
+    navigation.navigate('EditEvent', { event });
   };
 
   // Handle create new event
@@ -804,7 +802,7 @@ const ProfileScreen = ({ navigation }) => {
       // Find the actual event object from events array
       const actualEvent = events.find(e => e.id === selectedEvent.id);
       if (actualEvent) {
-        navigation.navigate('Create', { editMode: true, event: actualEvent });
+        navigation.navigate('EditEvent', { event: actualEvent });
       }
     }
   };
@@ -822,374 +820,236 @@ const ProfileScreen = ({ navigation }) => {
   };
 
   return (
-    <SafeAreaView style={[styles.container, { backgroundColor: '#000000' }]} edges={['top']}>
-      {/* Role toggle in the top left - only show if user is a provider */}
-      {isProvider && (
-      <Animated.View 
-        style={[
-          styles.roleToggleContainer,
-          {
-            transform: [{ scale: roleToggleAnim }],
-              backgroundColor: currentMode === 'attendee' ? 'rgba(42, 42, 42, 0.8)' : 'rgba(255, 215, 0, 0.2)',
-              borderColor: currentMode === 'attendee' ? 'rgba(255, 215, 0, 0.3)' : 'rgba(255, 215, 0, 0.6)',
-          }
-        ]}
-      >
-        <TouchableOpacity
-          style={styles.roleToggleButton}
-          onPress={toggleUserRole}
-          activeOpacity={0.7}
-        >
-          <Text style={[
-            styles.roleToggleText,
-              { color: currentMode === 'attendee' ? '#FFFFFF' : '#FFD700' }
-          ]}>
-              {currentMode === 'attendee' ? 'Attendee' : 'Event Host'}
+    <SafeAreaView style={[styles.container, { backgroundColor: '#000000' }]} edges={[]}>
+      {/* ── Full-width lip header ─────────────────────────────────── */}
+      <Animated.View style={[styles.lip, { paddingTop: insets.top + 14, opacity: profileAnimation }]}>
+        {/* Avatar box */}
+        <View style={styles.avatarBox}>
+          {(currentMode === 'attendee' ? userData.avatar : userData.organizer.avatar) ? (
+            <Image
+              source={{ uri: currentMode === 'attendee' ? userData.avatar : userData.organizer.avatar }}
+              style={styles.avatarImg}
+            />
+          ) : (
+            <View style={styles.avatarPlaceholder}>
+              <Text style={styles.avatarPlaceholderText}>
+                {(currentMode === 'attendee' ? userData.name : userData.organizer.name || 'U').charAt(0).toUpperCase()}
+              </Text>
+            </View>
+          )}
+        </View>
+
+        {/* Name + email */}
+        <View style={styles.headerInfo}>
+          <Text style={styles.userName} numberOfLines={1}>
+            {currentMode === 'attendee' ? userData.name : userData.organizer.name}
           </Text>
-          <Icon
-            name="chevron-down" 
-            type="feather"
-            size={16} 
-            color="#FFD700" 
-            style={styles.roleToggleIcon}
-          />
+          <Text style={styles.userContact} numberOfLines={1}>
+            {user?.email || user?.phone || ''}
+          </Text>
+          {currentMode === 'provider' && (
+            <View style={styles.roleTag}>
+              <Text style={styles.roleTagText}>{t('profile.roleTag.eventHost')}</Text>
+            </View>
+          )}
+        </View>
+
+        {/* Edit button */}
+        <TouchableOpacity style={styles.editIconBtn} onPress={handleEditProfile} activeOpacity={0.7}>
+          <Icon name="edit-2" type="feather" size={16} color="#FFFFFF" />
         </TouchableOpacity>
       </Animated.View>
+
+      {/* ── Balance strip — provider only ────────────────────────── */}
+      {currentMode === 'provider' && (
+        <Animated.View style={{ opacity: profileAnimation }}>
+          <View style={styles.balanceStrip}>
+            <View style={styles.balanceLeft}>
+              <Text style={styles.balanceStripAmount}>
+                ${(userData.organizer.balance ?? 0).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+              </Text>
+              <View style={styles.balanceSubRow}>
+                <Text style={styles.balanceAvailLabel}>{t('profile.balance.available')}</Text>
+                <Text style={styles.balanceSep}>·</Text>
+                <Text style={styles.balanceProcessingLabel}>
+                  {t('profile.balance.processingAmount', { amount: (userData.organizer.processingBalance ?? 0).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 }) })}
+                </Text>
+              </View>
+            </View>
+            <TouchableOpacity style={styles.withdrawBtn} activeOpacity={0.8}>
+              <Text style={styles.withdrawBtnText}>{t('profile.button.withdraw')}</Text>
+            </TouchableOpacity>
+          </View>
+        </Animated.View>
       )}
 
       <ScrollView
         style={styles.scrollView}
         showsVerticalScrollIndicator={false}
-        contentContainerStyle={[
-          styles.scrollContent,
-          { paddingTop: isProvider ? 60 : 20 } // Add padding only if role toggle is shown
-        ]}
+        contentContainerStyle={styles.scrollContent}
       >
-        <Animated.View style={{
-          opacity: profileAnimation,
-          transform: [{
-            translateY: profileAnimation.interpolate({
-              inputRange: [0, 1],
-              outputRange: [30, 0],
-            })
-          }]
-        }}>
-        <View style={styles.profileSection}>
-            <View style={styles.avatarContainer}>
-              {(currentMode === 'attendee' ? userData.avatar : userData.organizer.avatar) ? (
-              <Avatar
-                size={120}
-                rounded
-                  source={{ uri: currentMode === 'attendee' ? userData.avatar : userData.organizer.avatar }}
-                containerStyle={styles.avatar}
-          />
-              ) : (
-                <View style={styles.avatarPlaceholder}>
-                  <Text style={styles.avatarPlaceholderText}>
-                    {(currentMode === 'attendee' ? userData.name : userData.organizer.name || 'U').charAt(0).toUpperCase()}
-                  </Text>
-                </View>
-              )}
+        <Animated.View style={{ opacity: profileAnimation }}>
+          <View />
+
+          {/* ── Menu items — each in its own card ─────────────────── */}
+          {currentMode === 'attendee' && (
+            <View style={styles.menuCard}>
+              <MenuItem icon="credit-card" label={t('profile.menu.tickets')} onPress={() => setShowPurchases(true)} />
             </View>
-          <Text style={[styles.userName, { color: theme.colors.text }]}>
-              {currentMode === 'attendee' ? userData.name : userData.organizer.name}
-            </Text>
-            
-            {currentMode === 'provider' && (
-              <Text style={styles.organizerTitle}>
-                {userData.organizer.title}
-          </Text>
-            )}
-            
-            <View style={styles.buttonRow}>
-              <ProfileButton 
-                title={currentMode === 'attendee' ? "Edit Profile" : "Edit Organization"}
-                onPress={handleEditProfile}
-                animatedValue={profileAnimation}
-                width="49%"
-                marginHorizontal={0}
-              />
-              <ProfileButton 
-                title="Settings" 
-                onPress={() => navigation.navigate('Settings')}
-                animatedValue={profileAnimation}
-                width="49%"
-                marginHorizontal={0}
+          )}
+
+          {isProvider && currentMode === 'provider' && (
+            <View style={styles.menuCard}>
+              <MenuItem
+                icon="link"
+                label={t('profile.menu.connectedAccounts')}
+                onPress={() => Alert.alert(t('profile.alert.connectedAccounts.title'), t('profile.alert.connectedAccounts.message'))}
               />
             </View>
+          )}
+
+          {isProvider && (
+            <View style={styles.menuCard}>
+              <MenuItem
+                icon={currentMode === 'provider' ? 'user' : 'star'}
+                label={currentMode === 'provider' ? t('profile.menu.switchToAttendee') : t('profile.menu.switchToHost')}
+                onPress={toggleUserRole}
+              />
+            </View>
+          )}
+
+          {!isProvider && (
+            <View style={styles.menuCard}>
+              <MenuItem icon="star" label={t('profile.menu.becomeHost')} onPress={() => navigation.navigate('BecomeProvider')} />
+            </View>
+          )}
+
+          <View style={styles.menuCard}>
+            <MenuItem
+              icon="info"
+              label={t('profile.menu.about')}
+              onPress={() => Alert.alert(t('profile.alert.about.title'), t('profile.alert.about.message'))}
+            />
+          </View>
+
+          <View style={styles.menuCard}>
+            <MenuItem
+              icon="log-out"
+              label={t('profile.menu.logout')}
+              onPress={() => Alert.alert(t('profile.alert.logout.title'), t('profile.alert.logout.message'), [
+                { text: t('common.cancel'), style: 'cancel' },
+                { text: t('profile.menu.logout'), style: 'destructive', onPress: () => navigation.replace('Login') }
+              ])}
+              danger
+            />
           </View>
         </Animated.View>
 
-        {/* Followed Organizers Section - only visible in attendee mode */}
-        {currentMode === 'attendee' && (
-          <View style={styles.eventsSection}>
-            <View style={styles.sectionHeaderRow}>
-              <AnimatedSectionTitle 
-                title="Followed Organizers" 
-                animatedValue={organizersAnimation} 
-              />
-            </View>
-            
-            <ScrollView
-              horizontal
-              showsHorizontalScrollIndicator={false}
-              contentContainerStyle={styles.organizersCarousel}
-            >
-              {userData.followedOrganizers?.length > 0 ? (
-                userData.followedOrganizers.map((organizer) => (
-                <OrganizerItem
-                  key={organizer.id}
-                  organizer={organizer}
-                  onPress={() => handleOrganizerPress(organizer)}
-                  animatedValue={organizersAnimation}
-                />
-                ))
-              ) : (
-                <View style={styles.emptyCarouselState}>
-                  <Text style={[styles.emptyStateText, { color: theme.colors.textSecondary }]}>
-                    No followed organizers yet
-                  </Text>
-                  <Text style={[styles.emptyStateSubtext, { color: theme.colors.textSecondary }]}>
-                    Discover and follow event organizers!
-                  </Text>
-                </View>
-              )}
-            </ScrollView>
-          </View>
-        )}
 
-        {/* Organizer Stats Section - only visible in provider mode */}
-        {currentMode === 'provider' && (
-          <Animated.View style={{
-            opacity: organizerStatsAnimation,
-            transform: [{
-              translateY: organizerStatsAnimation.interpolate({
-                inputRange: [0, 1],
-                outputRange: [30, 0],
-              })
-            }]
-          }}>
-            {/* Balance Card */}
-            <View style={styles.balanceCard}>
-              <View style={styles.balanceHeader}>
-                <Text style={styles.balanceLabel}>Available Balance</Text>
-                <TouchableOpacity style={styles.withdrawButton}>
-                  <Text style={styles.withdrawText}>Withdraw</Text>
-                </TouchableOpacity>
-              </View>
-              <Text style={styles.balanceAmount}>
-                ${userData.organizer.balance.toLocaleString('en-US', {minimumFractionDigits: 2, maximumFractionDigits: 2})}
-              </Text>
-              <View style={styles.balanceInfo}>
-                <Icon
-                  name="info"
-                  type="feather"
-                  size={12}
-                  color="rgba(255, 255, 255, 0.6)"
-                  style={styles.infoIcon}
-                />
-                <Text style={styles.balanceInfoText}>
-                  Earnings from your ticket sales. Withdrawals take 1-2 business days.
-                </Text>
-              </View>
-            </View>
-            
-            <View style={styles.statsSection}>
-              <View style={styles.statItem}>
-                <Icon
-                  name="calendar"
-                  type="feather"
-                  size={24}
-                  color="#FF4B8C"
-                  style={styles.statIcon}
-                />
-                <Text style={styles.statCount}>{formatCount(userData.organizer.stats.events)}+</Text>
-                <Text style={styles.statLabel}>Events</Text>
-        </View>
 
-              <View style={styles.statItem}>
-                <Icon
-                  name="users"
-                  type="feather"
-                  size={24}
-                  color="#4A00E0"
-                  style={styles.statIcon}
-                />
-                <Text style={styles.statCount}>{formatCount(userData.organizer.stats.attendees)}+</Text>
-                <Text style={styles.statLabel}>Attendees</Text>
-        </View>
 
-              <View style={styles.statItem}>
-                <Icon
-                  name="heart"
-                  type="feather"
-                  size={24}
-                  color="#FF4757"
-                  style={styles.statIcon}
-                />
-                <Text style={styles.statCount}>{formatCount(userData.organizer.stats.followers)}</Text>
-                <Text style={styles.statLabel}>Followers</Text>
-              </View>
-            </View>
-          </Animated.View>
-        )}
-
-        {/* Events Section - content changes based on role */}
-        <View style={styles.eventsSection}>
-          <View style={styles.sectionHeaderRow}>
-            <AnimatedSectionTitle 
-              title={currentMode === 'attendee' ? "My Tickets" : "Upcoming Events"} 
-              animatedValue={upcomingEventsAnimation} 
-            />
-            {currentMode === 'attendee' && hasMoreTickets && (
-              <TouchableOpacity
-                style={styles.viewAllButton}
-                onPress={() => navigation.navigate('My Tickets')}
-                activeOpacity={0.7}
-              >
-                <Text style={styles.viewAllText}>View All ({filteredUpcomingEvents.length})</Text>
-                <Icon
-                  name="chevron-right"
-                  type="feather"
-                  size={16}
-                  color="#FFD700"
-                />
-              </TouchableOpacity>
-            )}
-          </View>
-          
-          <View style={styles.eventsContainer}>
-            {currentMode === 'attendee' ? (
-              previewUpcomingEvents.length > 0 ? (
-              // Show tickets for attendee (preview of first 3)
-              previewUpcomingEvents.map((event) => (
-                <EventItem
-                  key={event.id}
-                  event={event}
-                  onPress={() => handleEventPress(event)}
-                  animatedValue={upcomingEventsAnimation}
-                    userRole={currentMode}
-                />
-              ))
-            ) : (
-                // Show message when no tickets
-                <View style={styles.emptyStateContainer}>
-                  <Icon
-                    name="confirmation-number"
-                    type="material"
-                    size={48}
-                    color="rgba(255,255,255,0.3)"
-                    style={styles.emptyStateIcon}
-                  />
-                  <Text style={[styles.emptyStateText, { color: theme.colors.textSecondary }]}>
-                    No tickets yet
-                  </Text>
-                  <Text style={[styles.emptyStateSubtext, { color: theme.colors.textSecondary }]}>
-                    Start exploring events to get your first tickets!
-                  </Text>
-                </View>
-              )
-            ) : (
-              userData.organizer.createdEvents?.length > 0 ? (
-                // Show created events for provider
-                userData.organizer.createdEvents.map((event) => (
-                <EventItem
-                key={event.id}
-                event={event}
-                  onPress={() => handleUpcomingEventPress(event)}
-                  animatedValue={upcomingEventsAnimation}
-                  isEditable={true}
-                    userRole={currentMode}
-                  />
-                ))
-              ) : (
-                // Show create event prompt
-                <View style={styles.emptyStateContainer}>
-                  <Icon
-                    name="calendar"
-                    type="feather"
-                    size={48}
-                    color="rgba(255,255,255,0.3)"
-                    style={styles.emptyStateIcon}
-              />
-                  <Text style={[styles.emptyStateText, { color: theme.colors.textSecondary }]}>
-                    No events created yet
-                  </Text>
-                  <TouchableOpacity
-                    style={styles.createEventPrompt}
-                    onPress={handleCreateEvent}
-                  >
-                    <Text style={styles.createEventPromptText}>
-                      Create Your First Event
-                    </Text>
-                  </TouchableOpacity>
-                </View>
-              )
-            )}
-          </View>
-        </View>
-        
-        {/* Past Events Section */}
-        <View style={styles.eventsSection}>
-          <View style={styles.sectionHeaderRow}>
-            <AnimatedSectionTitle 
-              title={currentMode === 'attendee' ? "Past Tickets" : "Past Hosted Events"} 
-              animatedValue={pastEventsAnimation} 
-            />
-          </View>
-          
-          <ScrollView
-            horizontal
-            showsHorizontalScrollIndicator={false}
-            contentContainerStyle={styles.pastEventsCarousel}
-          >
-            {currentMode === 'attendee' ? (
-              userData.pastEvents?.length > 0 ? (
-              // Show past attended events
-                userData.pastEvents.map((event) => (
-                <EventItem
-                  key={event.id}
-                  event={event}
-                  onPress={() => {}} // No navigation for past events
-                  animatedValue={pastEventsAnimation}
-                  isPast={true}
-                    userRole={currentMode}
-                />
-              ))
-            ) : (
-                <View style={styles.emptyCarouselState}>
-                  <Text style={[styles.emptyStateText, { color: theme.colors.textSecondary }]}>
-                    No past events
-                  </Text>
-                </View>
-              )
-            ) : (
-              userData.organizer.pastCreatedEvents?.length > 0 ? (
-              // Show past hosted events - display only, not editable
-                userData.organizer.pastCreatedEvents.map((event) => (
-                <EventItem
-                  key={event.id}
-                  event={event}
-                  onPress={() => navigation.navigate('EventStats', { event })}
-                  animatedValue={pastEventsAnimation}
-                  isPast={true}
-                  isEditable={false}
-                    userRole={currentMode}
-                />
-              ))
-              ) : (
-                <View style={styles.emptyCarouselState}>
-                  <Text style={[styles.emptyStateText, { color: theme.colors.textSecondary }]}>
-                    No past events
-                  </Text>
-                </View>
-              )
-            )}
-          </ScrollView>
+        {/* ── Footer links ────────────────────────────────────────── */}
+        <View style={styles.footerLinks}>
+          <TouchableOpacity onPress={() => Alert.alert(t('profile.alert.terms.title'), t('common.comingSoon'))}>
+            <Text style={styles.footerLink}>{t('profile.footer.terms')}</Text>
+          </TouchableOpacity>
+          <TouchableOpacity onPress={() => Alert.alert(t('profile.alert.privacy.title'), t('common.comingSoon'))}>
+            <Text style={styles.footerLink}>{t('profile.footer.privacy')}</Text>
+          </TouchableOpacity>
         </View>
       </ScrollView>
 
       <CustomNavBar activeScreen="Profile" />
+
+      {/* ── Tickets Modal ─────────────────────────────────────── */}
+      <Modal
+        visible={showPurchases}
+        animationType="slide"
+        presentationStyle="pageSheet"
+        onRequestClose={() => setShowPurchases(false)}
+      >
+        <View style={styles.ticketModal}>
+          {/* Header */}
+          <View style={[styles.ticketModalHeader, { paddingTop: insets.top + 8 }]}>
+            <TouchableOpacity style={styles.ticketModalBack} onPress={() => setShowPurchases(false)} activeOpacity={0.7}>
+              <Icon name="arrow-left" type="feather" size={20} color="#FFFFFF" />
+            </TouchableOpacity>
+            <Text style={styles.ticketModalTitle}>{t('profile.tickets.title')}</Text>
+            <View style={{ width: 40 }} />
+          </View>
+
+          <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={{ paddingBottom: insets.bottom + 32 }}>
+            {/* My Tickets */}
+            <View style={styles.ticketSection}>
+              <Text style={styles.ticketSectionTitle}>{t('screens.myTickets')}</Text>
+              {filteredUpcomingEvents.length > 0 ? (
+                <View style={styles.eventsContainer}>
+                  {filteredUpcomingEvents.map(event => (
+                    <EventItem
+                      key={event.id}
+                      event={event}
+                      onPress={() => { setShowPurchases(false); handleEventPress(event); }}
+                      animatedValue={upcomingEventsAnimation}
+                      userRole={currentMode}
+                    />
+                  ))}
+                </View>
+              ) : (
+                <View style={styles.ticketEmpty}>
+                  <Icon name="credit-card" type="feather" size={36} color="rgba(255,255,255,0.2)" />
+                  <Text style={styles.ticketEmptyText}>{t('profile.tickets.emptyUpcoming')}</Text>
+                </View>
+              )}
+            </View>
+
+            {/* Past Tickets */}
+            <View style={styles.ticketSection}>
+              <Text style={styles.ticketSectionTitle}>{t('profile.tickets.past')}</Text>
+              {userData.pastEvents?.length > 0 ? (
+                <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.pastEventsCarousel}>
+                  {userData.pastEvents.map(event => (
+                    <EventItem
+                      key={event.id}
+                      event={event}
+                      onPress={() => {}}
+                      animatedValue={pastEventsAnimation}
+                      isPast
+                      userRole={currentMode}
+                    />
+                  ))}
+                </ScrollView>
+              ) : (
+                <View style={styles.ticketEmpty}>
+                  <Icon name="clock" type="feather" size={36} color="rgba(255,255,255,0.2)" />
+                  <Text style={styles.ticketEmptyText}>{t('profile.tickets.emptyPast')}</Text>
+                </View>
+              )}
+            </View>
+
+            {/* Followed Organizers */}
+            <View style={styles.ticketSection}>
+              <Text style={styles.ticketSectionTitle}>{t('profile.tickets.followedOrganizers')}</Text>
+              {userData.followedOrganizers?.length > 0 ? (
+                <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.organizersCarousel}>
+                  {userData.followedOrganizers.map(organizer => (
+                    <OrganizerItem
+                      key={organizer.id}
+                      organizer={organizer}
+                      onPress={() => { setShowPurchases(false); handleOrganizerPress(organizer); }}
+                      animatedValue={organizersAnimation}
+                    />
+                  ))}
+                </ScrollView>
+              ) : (
+                <View style={styles.ticketEmpty}>
+                  <Icon name="users" type="feather" size={36} color="rgba(255,255,255,0.2)" />
+                  <Text style={styles.ticketEmptyText}>{t('profile.tickets.emptyOrganizers')}</Text>
+                </View>
+              )}
+            </View>
+          </ScrollView>
+        </View>
+      </Modal>
 
       {/* Event Action Popup */}
       <Modal
@@ -1211,7 +1071,7 @@ const ProfileScreen = ({ navigation }) => {
             >
               <View style={styles.popupHeader}>
                 <Text style={styles.popupTitle}>
-                  {selectedEvent?.name || 'Event Options'}
+                  {selectedEvent?.name || t('profile.popup.eventOptions')}
                 </Text>
                 <TouchableOpacity
                   style={styles.closeButton}
@@ -1227,8 +1087,8 @@ const ProfileScreen = ({ navigation }) => {
                   onPress={handleEditFromPopup}
                 >
                   <Icon name="edit-2" type="feather" size={20} color="#FFD700" />
-                  <Text style={styles.actionButtonText}>Edit Event</Text>
-                  <Text style={styles.actionButtonSubtext}>Modify event details</Text>
+                  <Text style={styles.actionButtonText}>{t('profile.popup.editEvent')}</Text>
+                  <Text style={styles.actionButtonSubtext}>{t('profile.popup.editEventSubtext')}</Text>
                 </TouchableOpacity>
 
                 <View style={styles.actionDivider} />
@@ -1238,8 +1098,8 @@ const ProfileScreen = ({ navigation }) => {
                   onPress={handleStatsFromPopup}
                 >
                   <Icon name="bar-chart-2" type="feather" size={20} color="#4CAF50" />
-                  <Text style={styles.actionButtonText}>View Stats</Text>
-                  <Text style={styles.actionButtonSubtext}>See ticket sales & revenue</Text>
+                  <Text style={styles.actionButtonText}>{t('profile.popup.viewStats')}</Text>
+                  <Text style={styles.actionButtonSubtext}>{t('profile.popup.viewStatsSubtext')}</Text>
                 </TouchableOpacity>
               </View>
             </TouchableOpacity>
@@ -1259,13 +1119,10 @@ const styles = StyleSheet.create({
     flex: 1,
   },
   scrollContent: {
-    paddingBottom: 120, // Extra padding for the floating tab bar
-  },
-  profileSection: {
-    alignItems: 'center',
-    paddingHorizontal: 16,
-    paddingTop: 20,
-    paddingBottom: 24,
+    flexGrow: 1,
+    justifyContent: 'center',
+    paddingVertical: 32,
+    paddingBottom: 120,
   },
   avatarContainer: {
     padding: 4,
@@ -1274,11 +1131,6 @@ const styles = StyleSheet.create({
   },
   avatar: {
     borderWidth: 0,
-  },
-  userName: {
-    fontSize: 28,
-    fontWeight: '700',
-    marginBottom: 8,
   },
   userBio: {
     fontSize: 16,
@@ -1386,6 +1238,7 @@ const styles = StyleSheet.create({
     fontSize: 14,
     textAlign: 'center',
     marginBottom: 4,
+    textTransform: 'uppercase',
   },
   dateBadge: {
     position: 'absolute',
@@ -1483,31 +1336,28 @@ const styles = StyleSheet.create({
     marginBottom: 16,
     fontWeight: '500',
   },
-  statsSection: {
+  statsRow: {
     flexDirection: 'row',
-    justifyContent: 'space-around',
-    paddingVertical: 24,
-    paddingHorizontal: 16,
-    backgroundColor: 'rgba(255, 255, 255, 0.05)',
-    borderRadius: 16,
-    marginHorizontal: 16,
-    marginBottom: 24,
+    paddingHorizontal: 28,
+    paddingBottom: 16,
   },
-  statItem: {
+  statPill: {
+    flex: 1,
     alignItems: 'center',
+    paddingVertical: 4,
   },
-  statIcon: {
-    marginBottom: 8,
-  },
-  statCount: {
-    fontSize: 28,
+  statPillCount: {
+    fontSize: 18,
     fontWeight: '700',
     color: '#FFFFFF',
-    marginBottom: 4,
+    marginBottom: 2,
   },
-  statLabel: {
-    fontSize: 14,
-    color: 'rgba(255, 255, 255, 0.6)',
+  statPillLabel: {
+    fontSize: 11,
+    fontWeight: '500',
+    color: 'rgba(255,255,255,0.4)',
+    textTransform: 'uppercase',
+    letterSpacing: 0.5,
   },
   editBadge: {
     position: 'absolute',
@@ -1543,54 +1393,52 @@ const styles = StyleSheet.create({
     fontSize: 10,
     color: 'rgba(255, 255, 255, 0.6)',
   },
-  balanceCard: {
-    backgroundColor: 'rgba(74, 0, 224, 0.15)',
-    borderRadius: 16,
-    padding: 20,
-    marginHorizontal: 16,
-    marginBottom: 24,
-    borderLeftWidth: 4,
-    borderLeftColor: '#4A00E0',
-  },
-  balanceHeader: {
+  // ── Balance strip (provider only, sits between lip and scroll) ──────────
+  balanceStrip: {
     flexDirection: 'row',
-    justifyContent: 'space-between',
     alignItems: 'center',
-    marginBottom: 8,
+    justifyContent: 'space-between',
+    paddingHorizontal: 28,
+    paddingVertical: 20,
   },
-  balanceLabel: {
-    fontSize: 14,
-    color: 'rgba(255, 255, 255, 0.7)',
-    fontWeight: '500',
+  balanceLeft: {
+    gap: 4,
   },
-  withdrawButton: {
-    backgroundColor: 'rgba(255, 255, 255, 0.1)',
-    paddingVertical: 6,
-    paddingHorizontal: 12,
-    borderRadius: 12,
+  balanceStripAmount: {
+    fontSize: 38,
+    fontWeight: '800',
+    color: '#FFFFFF',
+    letterSpacing: -0.5,
   },
-  withdrawText: {
-    fontSize: 12,
-    color: '#FFD700',
+  balanceSubRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+  },
+  balanceAvailLabel: {
+    fontSize: 13,
+    color: '#4ade80',
     fontWeight: '600',
   },
-  balanceAmount: {
-    fontSize: 36,
+  balanceSep: {
+    fontSize: 13,
+    color: 'rgba(255,255,255,0.25)',
+  },
+  balanceProcessingLabel: {
+    fontSize: 13,
+    color: 'rgba(255,255,255,0.45)',
+    fontWeight: '500',
+  },
+  withdrawBtn: {
+    backgroundColor: '#FFFFFF',
+    paddingVertical: 10,
+    paddingHorizontal: 22,
+    borderRadius: 20,
+  },
+  withdrawBtnText: {
+    fontSize: 14,
     fontWeight: '700',
-    color: '#FFFFFF',
-    marginBottom: 12,
-  },
-  balanceInfo: {
-    flexDirection: 'row',
-    alignItems: 'center',
-  },
-  infoIcon: {
-    marginRight: 6,
-  },
-  balanceInfoText: {
-    fontSize: 12,
-    color: 'rgba(255, 255, 255, 0.6)',
-    flex: 1,
+    color: '#000000',
   },
   organizersCarousel: {
     paddingVertical: 16,
@@ -1794,6 +1642,7 @@ const styles = StyleSheet.create({
     color: '#FFFFFF',
     flex: 1,
     marginRight: 10,
+    textTransform: 'uppercase',
   },
   closeButton: {
     padding: 4,
@@ -1824,6 +1673,191 @@ const styles = StyleSheet.create({
     height: 1,
     backgroundColor: 'rgba(255, 255, 255, 0.1)',
     marginHorizontal: 16,
+  },
+
+  // ── New profile card styles ──────────────────────────────────────────────
+  lip: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#1a1a1a',
+    paddingHorizontal: 20,
+    paddingBottom: 22,
+    borderBottomLeftRadius: 28,
+    borderBottomRightRadius: 28,
+    ...Platform.select({
+      ios: { shadowColor: '#000', shadowOffset: { width: 0, height: 6 }, shadowOpacity: 0.35, shadowRadius: 10 },
+      android: { elevation: 10 },
+    }),
+  },
+  avatarBox: {
+    width: 62,
+    height: 62,
+    borderRadius: 16,
+    overflow: 'hidden',
+    backgroundColor: '#2a2a2a',
+    marginRight: 14,
+    flexShrink: 0,
+  },
+  avatarImg: {
+    width: '100%',
+    height: '100%',
+  },
+  headerInfo: {
+    flex: 1,
+    justifyContent: 'center',
+  },
+  editIconBtn: {
+    width: 36,
+    height: 36,
+    borderRadius: 10,
+    backgroundColor: 'rgba(255,255,255,0.08)',
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginLeft: 10,
+    flexShrink: 0,
+  },
+  roleTag: {
+    marginTop: 5,
+    alignSelf: 'flex-start',
+    backgroundColor: 'rgba(255,215,0,0.15)',
+    borderRadius: 6,
+    paddingHorizontal: 8,
+    paddingVertical: 2,
+  },
+  roleTagText: {
+    fontSize: 11,
+    fontWeight: '700',
+    color: '#FFD700',
+    letterSpacing: 0.3,
+  },
+  userName: {
+    fontSize: 17,
+    fontWeight: '700',
+    color: '#FFFFFF',
+    marginBottom: 3,
+  },
+  userContact: {
+    fontSize: 13,
+    color: 'rgba(255,255,255,0.45)',
+    fontWeight: '400',
+  },
+  // ── Menu card ───────────────────────────────────────────────────────────
+  menuCard: {
+    marginHorizontal: 20,
+    marginTop: 20,
+    backgroundColor: '#1a1a1a',
+    borderRadius: 20,
+    overflow: 'hidden',
+  },
+  menuItem: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingHorizontal: 18,
+    paddingVertical: 16,
+  },
+  menuIconBox: {
+    width: 36,
+    height: 36,
+    borderRadius: 10,
+    backgroundColor: 'rgba(255,255,255,0.08)',
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginRight: 14,
+  },
+  menuIconBoxDanger: {
+    backgroundColor: 'rgba(255,75,140,0.12)',
+  },
+  menuLabel: {
+    flex: 1,
+    fontSize: 15,
+    fontWeight: '600',
+    color: '#FFFFFF',
+  },
+  menuDivider: {
+    height: 1,
+    backgroundColor: 'rgba(255,255,255,0.06)',
+    marginHorizontal: 18,
+  },
+  purchaseSection: {
+    paddingHorizontal: 16,
+    paddingTop: 8,
+    paddingBottom: 12,
+  },
+  purchaseSectionTitle: {
+    fontSize: 13,
+    fontWeight: '700',
+    color: 'rgba(255,255,255,0.5)',
+    textTransform: 'uppercase',
+    letterSpacing: 0.8,
+    marginBottom: 10,
+  },
+  purchaseEmpty: {
+    fontSize: 13,
+    color: 'rgba(255,255,255,0.35)',
+    paddingVertical: 8,
+    paddingHorizontal: 4,
+  },
+  // ── Tickets modal ───────────────────────────────────────────────────────
+  ticketModal: {
+    flex: 1,
+    backgroundColor: '#0d0d0d',
+  },
+  ticketModalHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingHorizontal: 18,
+    paddingBottom: 12,
+    backgroundColor: '#0d0d0d',
+  },
+  ticketModalBack: {
+    width: 40,
+    height: 40,
+    borderRadius: 12,
+    backgroundColor: 'rgba(255,255,255,0.08)',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  ticketModalTitle: {
+    fontSize: 18,
+    fontWeight: '700',
+    color: '#FFFFFF',
+    letterSpacing: 0.3,
+  },
+  ticketSection: {
+    paddingHorizontal: 20,
+    paddingTop: 24,
+    paddingBottom: 8,
+  },
+  ticketSectionTitle: {
+    fontSize: 13,
+    fontWeight: '700',
+    color: 'rgba(255,255,255,0.45)',
+    textTransform: 'uppercase',
+    letterSpacing: 1,
+    marginBottom: 14,
+  },
+  ticketEmpty: {
+    alignItems: 'center',
+    paddingVertical: 28,
+    gap: 10,
+  },
+  ticketEmptyText: {
+    fontSize: 14,
+    color: 'rgba(255,255,255,0.3)',
+    fontWeight: '500',
+  },
+  // ── Footer ──────────────────────────────────────────────────────────────
+  footerLinks: {
+    alignItems: 'center',
+    paddingVertical: 24,
+    gap: 10,
+  },
+  footerLink: {
+    fontSize: 13,
+    color: 'rgba(255,255,255,0.35)',
+    fontWeight: '500',
+    marginBottom: 6,
   },
 });
 

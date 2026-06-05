@@ -1,580 +1,497 @@
-import React, { useState, useEffect } from 'react';
+import React, { useEffect, useRef, useState, useMemo } from 'react';
 import {
   StyleSheet,
   View,
   ScrollView,
+  Animated,
   TouchableOpacity,
-  Dimensions,
   Platform,
   Image,
+  StatusBar,
 } from 'react-native';
-import { Text, Icon, useTheme } from '@rneui/themed';
-import { SafeAreaView } from 'react-native-safe-area-context';
+import { Text, Icon } from '@rneui/themed';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { LinearGradient } from 'expo-linear-gradient';
 import { useEvents } from '../context/EventsContext';
+import { useLanguage } from '../context/LanguageContext';
 import { formatCount } from '../utils/formatNumbers';
+import { getPersonAvatar, resolveAvatarSource } from '../assets/avatars';
+import {
+  CHART_W,
+  buildCheckInTrend,
+  buildSalesTrend,
+  fmtRevenue,
+  AreaChart,
+  BarChart,
+  Card,
+  HeroStat,
+  ChartCard,
+  SectionLabel,
+  dashStyles,
+} from '../utils/eventDashboardCharts';
 
-const { width } = Dimensions.get('window');
+const formatEventDate = (date) => {
+  if (!date) return '';
+  const d = date instanceof Date ? date : new Date(date);
+  if (Number.isNaN(d.getTime())) return '';
+  return d.toLocaleDateString(undefined, { weekday: 'short', month: 'short', day: 'numeric', year: 'numeric' });
+};
+
+const formatDuration = (startTime, endTime) => {
+  const start = new Date(startTime);
+  const end = new Date(endTime || Date.now());
+  if (Number.isNaN(start.getTime())) return '—';
+  const diff = Math.max(0, end.getTime() - start.getTime());
+  const hrs = Math.floor(diff / 3600000);
+  const mins = Math.floor((diff % 3600000) / 60000);
+  if (hrs > 0) return `${hrs}h ${mins}m`;
+  return `${mins}m`;
+};
+
+const formatTimeAgo = (timestamp, t) => {
+  if (!timestamp) return '';
+  const diff = Date.now() - new Date(timestamp).getTime();
+  const mins = Math.floor(diff / 60000);
+  if (mins <= 0) return t('liveDashboard.time.justNow');
+  if (mins === 1) return t('liveDashboard.time.oneMinAgo');
+  return t('liveDashboard.time.minsAgo', { count: mins });
+};
 
 const EventStats = ({ navigation, route }) => {
-  const { theme } = useTheme();
-  const { getUserTickets } = useEvents();
-  const { event } = route.params || {};
+  const insets = useSafeAreaInsets();
+  const { t } = useLanguage();
+  const { getUserTickets, getEventById } = useEvents();
+  const paramEvent = route.params?.event;
+  const event = (paramEvent?.id ? getEventById(paramEvent.id) : null) || paramEvent;
+
+  const fadeAnim = useRef(new Animated.Value(0)).current;
   const [loading, setLoading] = useState(true);
-  const [statsData, setStatsData] = useState(null);
+  const [eventTickets, setEventTickets] = useState([]);
+
+  const imgUri = event?.coverImage || event?.flyers?.[0] || event?.image;
+  const eventDate = formatEventDate(event?.date || event?.startTime);
+  const duration = formatDuration(event?.startTime, event?.endTime);
 
   useEffect(() => {
-    const loadEventStats = async () => {
+    Animated.timing(fadeAnim, { toValue: 1, duration: 400, useNativeDriver: true }).start();
+  }, [fadeAnim]);
+
+  useEffect(() => {
+    const load = async () => {
+      if (!event?.id) {
+        setLoading(false);
+        return;
+      }
       try {
-        if (!event) {
-          setLoading(false);
-          return;
-        }
-
-        // Get real ticket data for this event
         const allTickets = await getUserTickets('all');
-        const eventTickets = Array.isArray(allTickets) ? allTickets.filter(ticket => ticket.eventId === event.id) : [];
-        
-        console.log('📊 EventStats for event:', event.id, {
-          eventTitle: event.title,
-          allTicketsCount: allTickets?.length || 0,
-          eventTicketsCount: eventTickets.length,
-          eventTickets: eventTickets.map(t => ({
-            id: t.id,
-            eventId: t.eventId,
-            price: t.price,
-            isFree: t.isFree,
-            ticketType: t.ticketType,
-            isScanned: t.isScanned,
-            status: t.status,
-            purchaseDate: t.purchaseDate
-          })),
-          eventTicketTypes: event.tickets?.map(tt => ({
-            name: tt.name,
-            price: tt.price,
-            isFree: tt.isFree
-          }))
-        });
-        
-        // Calculate real stats from actual tickets
-        const ticketsSold = eventTickets.length; // Total tickets sold for this event
-        const scannedTickets = eventTickets.filter(ticket => ticket.isScanned || ticket.status === 'used').length; // People who successfully scanned in
-        
-        // Calculate revenue from actual ticket sales (total amount spent by users)
-        const totalRevenue = eventTickets.reduce((total, ticket) => {
-          // Handle different price field possibilities
-          let price = 0;
-          if (ticket.price !== undefined && ticket.price !== null) {
-            price = parseFloat(ticket.price) || 0;
-          } else if (ticket.amount !== undefined && ticket.amount !== null) {
-            price = parseFloat(ticket.amount) || 0;
-          } else if (ticket.cost !== undefined && ticket.cost !== null) {
-            price = parseFloat(ticket.cost) || 0;
-          }
-          
-          console.log('💰 Processing ticket price:', {
-            ticketId: ticket.id,
-            rawPrice: ticket.price,
-            amount: ticket.amount,
-            cost: ticket.cost,
-            finalPrice: price,
-            ticketType: ticket.ticketType,
-            isFree: ticket.isFree
-          });
-          return total + price;
-        }, 0);
-        
-        console.log('📈 Calculated stats:', {
-          ticketsSold,
-          scannedTickets,
-          totalRevenue
-        });
-        
-        // Check if event has unlimited tickets
-        const hasUnlimitedTickets = event.tickets?.some(t => t.isUnlimited) || event.isUnlimited || false;
-        
-        // Calculate actual capacity based on the total number of tickets available for sale
-        const calculateCapacity = () => {
-          console.log('🎫 Calculating capacity for event:', event.id, {
-            hasUnlimitedTickets,
-            eventTickets: event.tickets?.map(t => ({
-              name: t.name,
-              quantity: t.quantity,
-              isUnlimited: t.isUnlimited
-            })),
-            eventCapacity: event.capacity,
-            eventTotalSpots: event.totalSpots
-          });
-          
-          if (hasUnlimitedTickets) {
-            console.log('♾️ Event has unlimited tickets - capacity is Infinity');
-            return Infinity;
-          }
-          
-          if (event.tickets && event.tickets.length > 0) {
-            const calculatedCapacity = event.tickets.reduce((total, ticket) => {
-              const ticketQuantity = ticket.quantity || 0;
-              console.log(`📊 Adding ticket type "${ticket.name}": ${ticketQuantity} spots`);
-              return total + ticketQuantity;
-            }, 0);
-            
-            console.log(`✅ Total capacity from ticket types: ${calculatedCapacity}`);
-            return calculatedCapacity;
-          }
-          
-          // Fallback to event-level capacity settings
-          const fallbackCapacity = event.capacity || event.totalSpots || 100;
-          console.log(`⚠️ No ticket types found, using fallback capacity: ${fallbackCapacity}`);
-          return fallbackCapacity;
-        };
-        
-        const capacity = calculateCapacity();
-        
-        const calculatedStatsData = {
-          title: event.title || event.name || 'Past Event',
-          date: formatDate(event.date),
-          venue: event.venue || event.location || 'Venue not available',
-          image: event.image || event.coverImage || event.flyers?.[0] || 'https://via.placeholder.com/400x300',
-          totalAttendees: scannedTickets, // Real scanned tickets count
-          totalRevenue: totalRevenue, // Real revenue from ticket sales
-          ticketsSold: ticketsSold, // Real tickets sold count
-          capacity: capacity, // Real ticket capacity
-          category: event.category || 'Event',
-          status: 'completed'
-        };
-
-        setStatsData(calculatedStatsData);
+        const filtered = Array.isArray(allTickets)
+          ? allTickets.filter((ticket) => ticket.eventId === event.id)
+          : [];
+        setEventTickets(filtered);
       } catch (error) {
         console.error('Error loading event stats:', error);
+        setEventTickets([]);
       } finally {
         setLoading(false);
       }
     };
+    load();
+  }, [event?.id, getUserTickets]);
 
-    loadEventStats();
-  }, [event]);
+  const metrics = useMemo(() => {
+    const ticketsSoldFromEvent = (event?.tickets || []).reduce((s, tk) => s + (tk.sold || 0), 0);
+    const ticketsSold = ticketsSoldFromEvent || eventTickets.length || event?.bookedSpots || 0;
+    const checkedInFromEvent = event?.scannedTickets || 0;
+    const checkedInFromTickets = eventTickets.filter(
+      (tk) => tk.isScanned || tk.status === 'used',
+    ).length;
+    const checkedInCount = Math.max(checkedInFromEvent, checkedInFromTickets);
+
+    const revenueFromTickets = eventTickets.reduce((total, ticket) => {
+      const price = parseFloat(ticket.price ?? ticket.amount ?? ticket.cost ?? 0) || 0;
+      return total + price;
+    }, 0);
+    const revenueFromEvent = (event?.tickets || []).reduce((total, tk) => {
+      const sold = tk.sold || 0;
+      const price = parseFloat(tk.price) || 0;
+      return total + sold * price;
+    }, 0);
+    const revenueAmount = Math.max(revenueFromTickets, revenueFromEvent);
+
+    const checkInPct = ticketsSold > 0 ? Math.round((checkedInCount / ticketsSold) * 100) : 0;
+
+    const ticketBreakdown = (event?.tickets || []).map((tk) => {
+      const soldFromTickets = eventTickets.filter(
+        (et) => et.ticketType === tk.name || et.ticketId === tk.id,
+      ).length;
+      return {
+        name: tk.name || tk.type || 'Ticket',
+        sold: tk.sold || soldFromTickets || 0,
+        total: tk.quantity || tk.availableQuantity || tk.sold || 0,
+        price: parseFloat(tk.price) || 0,
+      };
+    });
+
+    const recentCheckIns = eventTickets
+      .filter((tk) => tk.isScanned || tk.status === 'used')
+      .sort((a, b) => new Date(b.scannedAt || b.purchaseDate || 0) - new Date(a.scannedAt || a.purchaseDate || 0))
+      .slice(0, 5)
+      .map((tk) => ({
+        name: tk.purchaserName || tk.buyerName || 'Guest',
+        ticketType: tk.ticketType || tk.name || null,
+        timestamp: tk.scannedAt || tk.purchaseDate,
+        avatar: getPersonAvatar(tk.purchaserName || tk.buyerName, null),
+      }));
+
+    const checkInSeries = buildCheckInTrend(checkedInCount, (event?.id || '').length + checkedInCount);
+    const salesSeries = buildSalesTrend(ticketsSold, ticketsSold + 17);
+    const checkInLabels = ['Start', '', '', '', '', '', '', '', '', '', '', 'End'];
+    const salesLabels = ['Early', '', '', '', '', '', '', 'Final'];
+
+    return {
+      ticketsSold,
+      checkedInCount,
+      revenueAmount,
+      checkInPct,
+      ticketBreakdown,
+      recentCheckIns,
+      checkInSeries,
+      salesSeries,
+      checkInLabels,
+      salesLabels,
+    };
+  }, [event, eventTickets]);
 
   if (!event) {
     return (
-      <SafeAreaView style={[styles.container, { backgroundColor: theme.colors.background }]}>
-        <View style={styles.header}>
-          <TouchableOpacity 
-            style={styles.backButton}
-            onPress={() => navigation.goBack()}
-          >
-            <Icon name="arrow-left" type="feather" size={24} color={theme.colors.text} />
+      <View style={styles.container}>
+        <StatusBar barStyle="light-content" />
+        <LinearGradient colors={['#1A1A1A', '#0a0a0a']} style={StyleSheet.absoluteFill} />
+        <View style={[styles.centered, { paddingTop: insets.top }]}>
+          <Text style={styles.errorText}>{t('eventStats.notFound')}</Text>
+          <TouchableOpacity onPress={() => navigation.goBack()} style={styles.backBtn}>
+            <Icon name="arrow-left" type="feather" color="#FFFFFF" size={22} />
           </TouchableOpacity>
-          <Text style={[styles.headerTitle, { color: theme.colors.text }]}>Event Stats</Text>
-          <View style={styles.headerRight} />
         </View>
-        <View style={styles.errorContainer}>
-          <Text style={[styles.errorText, { color: theme.colors.text }]}>
-            Event data not found
-          </Text>
-        </View>
-      </SafeAreaView>
-    );
-  }
-
-  // Format the date properly to avoid React child error
-  const formatDate = (date) => {
-    if (!date) return 'Date not available';
-    if (typeof date === 'string') return date;
-    if (date instanceof Date) {
-      return date.toLocaleDateString('en-US', {
-        weekday: 'long',
-        year: 'numeric',
-        month: 'long',
-        day: 'numeric'
-      });
-    }
-    return 'Date not available';
-  };
-
-  // Show loading state while data is being fetched
-  if (loading || !statsData) {
-    return (
-      <SafeAreaView style={[styles.container, { backgroundColor: theme.colors.background }]}>
-        <LinearGradient
-          colors={['#1A1A1A', '#000000']}
-          style={StyleSheet.absoluteFill}
-        />
-        <View style={styles.header}>
-          <TouchableOpacity 
-            style={styles.backButton}
-            onPress={() => navigation.goBack()}
-          >
-            <Icon name="arrow-left" type="feather" size={24} color={theme.colors.text} />
-          </TouchableOpacity>
-          <Text style={[styles.headerTitle, { color: theme.colors.text }]}>Event Stats</Text>
-          <View style={styles.headerRight} />
-        </View>
-        <View style={styles.loadingContainer}>
-          <Text style={[styles.loadingText, { color: theme.colors.text }]}>
-            Loading event statistics...
-          </Text>
-        </View>
-      </SafeAreaView>
-    );
-  }
-
-  const StatCard = ({ title, value, subtitle, icon, color = theme.colors.primary }) => (
-    <View style={[styles.statCard, { backgroundColor: theme.colors.surface }]}>
-      <View style={styles.statHeader}>
-        <Icon name={icon} type="feather" size={24} color={color} />
-        <Text style={[styles.statTitle, { color: theme.colors.text }]}>{title}</Text>
       </View>
-      <Text style={[styles.statValue, { color: theme.colors.text }]}>{value}</Text>
-      {subtitle && (
-        <Text style={[styles.statSubtitle, { color: theme.colors.textSecondary }]}>
-          {subtitle}
-        </Text>
-      )}
-    </View>
-  );
+    );
+  }
+
+  if (loading) {
+    return (
+      <View style={styles.container}>
+        <StatusBar barStyle="light-content" />
+        <LinearGradient colors={['#1A1A1A', '#0a0a0a']} style={StyleSheet.absoluteFill} />
+        <View style={[styles.centered, { paddingTop: insets.top }]}>
+          <Text style={styles.loadingText}>{t('eventStats.loading')}</Text>
+        </View>
+      </View>
+    );
+  }
 
   return (
-    <SafeAreaView style={[styles.container, { backgroundColor: theme.colors.background }]}>
-      <LinearGradient
-        colors={['#1A1A1A', '#000000']}
-        style={StyleSheet.absoluteFill}
-      />
+    <View style={styles.container}>
+      <StatusBar barStyle="light-content" />
+      {imgUri ? (
+        <>
+          <Image source={{ uri: imgUri }} style={styles.bgImage} resizeMode="cover" />
+          <LinearGradient
+            colors={['rgba(10,10,10,0.45)', 'rgba(10,10,10,0.82)', '#0a0a0a']}
+            locations={[0, 0.45, 1]}
+            style={StyleSheet.absoluteFill}
+          />
+        </>
+      ) : (
+        <LinearGradient colors={['#1A1A1A', '#0a0a0a']} style={StyleSheet.absoluteFill} />
+      )}
 
-      {/* Header */}
-      <View style={styles.header}>
-        <TouchableOpacity 
-          style={styles.backButton}
-          onPress={() => navigation.goBack()}
-        >
-          <Icon name="arrow-left" type="feather" size={24} color={theme.colors.text} />
-        </TouchableOpacity>
-        <Text style={[styles.headerTitle, { color: theme.colors.text }]}>Event Stats</Text>
-        <View style={styles.headerRight} />
-      </View>
+      <Animated.View style={[styles.lip, { paddingTop: insets.top + 10, opacity: fadeAnim }]}>
+        <View style={styles.lipRow}>
+          <TouchableOpacity
+            style={styles.backBtn}
+            onPress={() => navigation.navigate('ManageEvents', { initialTab: 'past' })}
+            hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+          >
+            <Icon name="arrow-left" type="feather" color="#FFFFFF" size={22} />
+          </TouchableOpacity>
+          <View style={styles.lipCenter}>
+            <Text style={styles.lipDuration}>{duration}</Text>
+          </View>
+          <View style={styles.lipSpacer} />
+        </View>
+      </Animated.View>
 
-      <ScrollView 
-        style={styles.scrollView}
-        contentContainerStyle={styles.scrollContent}
+      <ScrollView
         showsVerticalScrollIndicator={false}
+        contentContainerStyle={[styles.scroll, { paddingBottom: insets.bottom + 32 }]}
       >
-        {/* Event Header */}
-        <View style={styles.eventHeader}>
-          <View style={styles.eventImageContainer}>
-            <Image 
-              source={{ uri: statsData.image }} 
-              style={styles.eventImage}
-              resizeMode="cover"
-            />
-            <LinearGradient
-              colors={['transparent', 'rgba(0,0,0,0.8)']}
-              style={styles.imageOverlay}
-            />
-            <View style={styles.statusBadge}>
-              <Text style={styles.statusText}>COMPLETED</Text>
-            </View>
-          </View>
-          
-          <View style={styles.eventInfo}>
-            <Text style={[styles.eventTitle, { color: theme.colors.text }]}>
-              {statsData.title}
+        <Animated.Text style={[styles.eventTitle, { opacity: fadeAnim }]} numberOfLines={3}>
+          {event.title}
+        </Animated.Text>
+
+        <Animated.View style={[styles.completedBadgeRow, { opacity: fadeAnim }]}>
+          <View style={styles.completedDot} />
+          <Text style={styles.completedBadgeText}>{t('eventStats.completed')}</Text>
+          {eventDate ? (
+            <>
+              <Text style={styles.completedSep}>·</Text>
+              <Text style={styles.completedDate}>{eventDate}</Text>
+            </>
+          ) : null}
+        </Animated.View>
+
+        {(event.venue || event.location) && (
+          <Animated.View style={[styles.venueRow, { opacity: fadeAnim }]}>
+            <Icon name="map-pin" type="feather" size={12} color="rgba(255,255,255,0.35)" />
+            <Text style={styles.venueText} numberOfLines={1}>
+              {event.venue || event.location}
             </Text>
-            
-            <View style={styles.eventDetails}>
-              <View style={styles.detailRow}>
-                <Icon name="calendar" type="feather" size={16} color={theme.colors.textSecondary} />
-                <Text style={[styles.detailText, { color: theme.colors.textSecondary }]}>
-                  {statsData.date}
-                </Text>
+          </Animated.View>
+        )}
+
+        <Animated.View style={[dashStyles.grid3, { opacity: fadeAnim }]}>
+          <HeroStat
+            label={t('liveDashboard.stats.revenue')}
+            value={fmtRevenue(metrics.revenueAmount)}
+            accent="#FF4B8C"
+            fade={fadeAnim}
+          />
+          <HeroStat
+            label={t('liveDashboard.stats.checkedIn')}
+            value={formatCount(metrics.checkedInCount)}
+            accent="#4ade80"
+            fade={fadeAnim}
+          />
+          <HeroStat
+            label={t('liveDashboard.stats.checkInRate')}
+            value={`${metrics.checkInPct}`}
+            suffix="%"
+            fade={fadeAnim}
+          />
+        </Animated.View>
+
+        <ChartCard fade={fadeAnim} title={t('liveDashboard.charts.checkInTrend')}>
+          <AreaChart
+            data={metrics.checkInSeries}
+            labels={metrics.checkInLabels}
+            w={CHART_W - 32}
+            color="#4ade80"
+            gradId="pastCheckInArea"
+          />
+        </ChartCard>
+
+        <ChartCard
+          fade={fadeAnim}
+          title={t('eventStats.charts.ticketSales')}
+          subtitle={t('eventStats.charts.totalSold', { count: formatCount(metrics.ticketsSold) })}
+        >
+          <BarChart
+            data={metrics.salesSeries}
+            labels={metrics.salesLabels}
+            w={CHART_W - 32}
+            color="#FF4B8C"
+          />
+        </ChartCard>
+
+        {metrics.ticketBreakdown.length > 0 && (
+          <>
+            <SectionLabel fade={fadeAnim}>{t('liveDashboard.ticketBreakdown.title')}</SectionLabel>
+            <Animated.View style={[dashStyles.grid2, { opacity: fadeAnim }]}>
+              {metrics.ticketBreakdown.map((tk, i) => {
+                const pct = tk.total > 0 ? Math.round((tk.sold / tk.total) * 100) : 0;
+                const singleTicket = metrics.ticketBreakdown.length === 1;
+                return (
+                  <View key={tk.name + i} style={singleTicket ? dashStyles.grid2CellFull : dashStyles.grid2Cell}>
+                    <Card fade={fadeAnim} style={dashStyles.ticketCardGrid}>
+                      <Text style={dashStyles.ticketName} numberOfLines={1}>{tk.name}</Text>
+                      <Text style={dashStyles.ticketCount}>
+                        {formatCount(tk.sold)}{tk.total > 0 ? ` / ${formatCount(tk.total)}` : ''}
+                      </Text>
+                      <View style={dashStyles.ticketBarTrack}>
+                        <View style={[dashStyles.ticketBarFill, { width: `${Math.min(pct, 100)}%` }]} />
+                      </View>
+                      {tk.price > 0 && (
+                        <Text style={dashStyles.ticketPrice}>
+                          ${tk.price.toFixed(0)} {t('liveDashboard.ticketBreakdown.each')}
+                        </Text>
+                      )}
+                    </Card>
+                  </View>
+                );
+              })}
+            </Animated.View>
+          </>
+        )}
+
+        <SectionLabel
+          fade={fadeAnim}
+          right={(
+            <TouchableOpacity
+              style={dashStyles.textActionBtn}
+              onPress={() => navigation.navigate('Attendees', { event, managerMode: true })}
+              activeOpacity={0.7}
+            >
+              <Icon name="users" type="feather" size={14} color="#FFFFFF" />
+              <Text style={dashStyles.textActionGuest}>{t('manageEvents.guestList')}</Text>
+            </TouchableOpacity>
+          )}
+        >
+          {t('liveDashboard.recentCheckIns.title')}
+        </SectionLabel>
+
+        {metrics.recentCheckIns.length > 0 ? (
+          metrics.recentCheckIns.map((checkIn, i) => (
+            <Card key={`${checkIn.name}-${i}`} fade={fadeAnim}>
+              <View style={dashStyles.checkInRow}>
+                <Image
+                  source={resolveAvatarSource(checkIn.avatar)}
+                  style={dashStyles.checkInAvatar}
+                />
+                <View style={dashStyles.checkInInfo}>
+                  <Text style={dashStyles.checkInName}>{checkIn.name}</Text>
+                  <Text style={dashStyles.checkInType}>
+                    {checkIn.ticketType || t('liveDashboard.recentCheckIns.generalAdmission')}
+                  </Text>
+                </View>
+                {checkIn.timestamp ? (
+                  <Text style={dashStyles.checkInTime}>{formatTimeAgo(checkIn.timestamp, t)}</Text>
+                ) : null}
               </View>
-              
-              <View style={styles.detailRow}>
-                <Icon name="map-pin" type="feather" size={16} color={theme.colors.textSecondary} />
-                <Text style={[styles.detailText, { color: theme.colors.textSecondary }]}>
-                  {statsData.venue}
-                </Text>
-              </View>
-              
-              <View style={styles.detailRow}>
-                <Icon name="tag" type="feather" size={16} color={theme.colors.textSecondary} />
-                <Text style={[styles.detailText, { color: theme.colors.textSecondary }]}>
-                  {statsData.category}
-                </Text>
-              </View>
-            </View>
-          </View>
-        </View>
-
-        {/* Stats Grid */}
-        <View style={styles.statsSection}>
-          <Text style={[styles.sectionTitle, { color: theme.colors.text }]}>
-            Event Performance
-          </Text>
-          
-          <View style={styles.statsGrid}>
-            <StatCard
-              title="Total Attendees"
-              value={formatCount(statsData.totalAttendees)}
-              subtitle={statsData.capacity === Infinity 
-                ? "Scanned tickets" 
-                : `${statsData.totalAttendees > 0 ? ((statsData.totalAttendees / statsData.capacity) * 100).toFixed(1) : 0}% capacity`
-              }
-              icon="users"
-              color="#4CAF50"
-            />
-            
-            <StatCard
-              title="Tickets Sold"
-              value={formatCount(statsData.ticketsSold)}
-              subtitle="Total sales"
-              icon="credit-card"
-              color="#FF4757"
-            />
-            
-            <StatCard
-              title="Revenue"
-              value={`$${statsData.totalRevenue.toLocaleString()}`}
-              subtitle="Total earnings"
-              icon="dollar-sign"
-              color="#FFD700"
-            />
-            
-            <StatCard
-              title="Capacity"
-              value={statsData.capacity === Infinity ? "∞" : formatCount(statsData.capacity)}
-              subtitle={statsData.capacity === Infinity ? "Unlimited" : "Max attendees"}
-              icon="home"
-              color="#9C88FF"
-            />
-          </View>
-        </View>
-
-        {/* Additional Insights */}
-        <View style={styles.insightsSection}>
-          <Text style={[styles.sectionTitle, { color: theme.colors.text }]}>
-            Event Insights
-          </Text>
-          
-          <View style={[styles.insightCard, { backgroundColor: theme.colors.surface }]}>
-            <View style={styles.insightHeader}>
-              <Icon name="trending-up" type="feather" size={20} color="#4CAF50" />
-              <Text style={[styles.insightTitle, { color: theme.colors.text }]}>
-                Event Success
-              </Text>
-            </View>
-            <Text style={[styles.insightText, { color: theme.colors.textSecondary }]}>
-              {statsData.totalAttendees > 0 
-                ? `Great turnout! ${formatCount(statsData.totalAttendees)} people attended your event (${formatCount(statsData.ticketsSold)} tickets were sold).`
-                : statsData.ticketsSold > 0 
-                  ? `${formatCount(statsData.ticketsSold)} tickets were sold, but no attendees were scanned in yet.`
-                  : 'Event completed successfully.'
-              }
-            </Text>
-          </View>
-
-          <View style={[styles.insightCard, { backgroundColor: theme.colors.surface }]}>
-            <View style={styles.insightHeader}>
-              <Icon name="clock" type="feather" size={20} color="#FF6B6B" />
-              <Text style={[styles.insightTitle, { color: theme.colors.text }]}>
-                Event Status
-              </Text>
-            </View>
-            <Text style={[styles.insightText, { color: theme.colors.textSecondary }]}>
-              This event has ended and all data has been finalized.
-            </Text>
-          </View>
-        </View>
-
-
+            </Card>
+          ))
+        ) : (
+          <Card fade={fadeAnim}>
+            <Text style={styles.emptyCheckIns}>{t('eventStats.noCheckIns')}</Text>
+          </Card>
+        )}
       </ScrollView>
-    </SafeAreaView>
+    </View>
   );
 };
 
 const styles = StyleSheet.create({
   container: {
     flex: 1,
+    backgroundColor: '#0a0a0a',
   },
-  scrollView: {
-    flex: 1,
+  bgImage: {
+    ...StyleSheet.absoluteFillObject,
   },
-  scrollContent: {
-    paddingBottom: 32,
+  lip: {
+    backgroundColor: 'rgba(26,26,26,0.88)',
+    paddingHorizontal: 18,
+    paddingBottom: 14,
+    borderBottomLeftRadius: 26,
+    borderBottomRightRadius: 26,
+    ...Platform.select({
+      ios: { shadowColor: '#000', shadowOffset: { width: 0, height: 6 }, shadowOpacity: 0.4, shadowRadius: 10 },
+      android: { elevation: 10 },
+    }),
   },
-  header: {
+  lipRow: {
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
-    paddingHorizontal: 16,
-    paddingVertical: 12,
   },
-  backButton: {
-    width: 40,
-    height: 40,
-    borderRadius: 20,
-    justifyContent: 'center',
+  backBtn: {
+    width: 36,
+    height: 36,
+    borderRadius: 18,
+    backgroundColor: 'rgba(255,255,255,0.08)',
     alignItems: 'center',
+    justifyContent: 'center',
   },
-  headerTitle: {
-    fontSize: 20,
-    fontWeight: '600',
+  lipCenter: {
+    flex: 1,
+    alignItems: 'center',
+    paddingHorizontal: 8,
   },
-  headerRight: {
-    width: 40,
-  },
-  eventHeader: {
-    marginBottom: 24,
-  },
-  eventImageContainer: {
-    position: 'relative',
-    height: 200,
-    marginHorizontal: 16,
-    borderRadius: 16,
-    overflow: 'hidden',
-  },
-  eventImage: {
-    width: '100%',
-    height: '100%',
-  },
-  imageOverlay: {
-    position: 'absolute',
-    bottom: 0,
-    left: 0,
-    right: 0,
-    height: 100,
-  },
-  statusBadge: {
-    position: 'absolute',
-    top: 16,
-    right: 16,
-    backgroundColor: '#4CAF50',
-    paddingHorizontal: 12,
-    paddingVertical: 6,
-    borderRadius: 20,
-  },
-  statusText: {
+  lipDuration: {
+    fontSize: 22,
+    fontWeight: '800',
     color: '#FFFFFF',
-    fontSize: 12,
-    fontWeight: '600',
+    fontVariant: ['tabular-nums'],
+    letterSpacing: -0.5,
   },
-  eventInfo: {
-    padding: 16,
+  lipSpacer: {
+    width: 36,
+  },
+  scroll: {
+    paddingHorizontal: 20,
+    paddingTop: 16,
+    gap: 16,
   },
   eventTitle: {
-    fontSize: 24,
-    fontWeight: '700',
-    marginBottom: 12,
-  },
-  eventDetails: {
-    gap: 8,
-  },
-  detailRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 8,
-  },
-  detailText: {
-    fontSize: 14,
-  },
-  statsSection: {
-    paddingHorizontal: 16,
-    marginBottom: 24,
-  },
-  sectionTitle: {
-    fontSize: 20,
-    fontWeight: '600',
-    marginBottom: 16,
-  },
-  statsGrid: {
-    flexDirection: 'row',
-    flexWrap: 'wrap',
-    gap: 12,
-  },
-  statCard: {
-    width: (width - 44) / 2,
-    padding: 16,
-    borderRadius: 12,
-    ...Platform.select({
-      ios: {
-        shadowColor: '#000',
-        shadowOffset: { width: 0, height: 2 },
-        shadowOpacity: 0.1,
-        shadowRadius: 4,
-      },
-      android: {
-        elevation: 2,
-      },
-    }),
-  },
-  statHeader: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    marginBottom: 8,
-    gap: 8,
-  },
-  statTitle: {
-    fontSize: 14,
-    fontWeight: '500',
-  },
-  statValue: {
-    fontSize: 24,
-    fontWeight: '700',
+    fontSize: 26,
+    fontWeight: '800',
+    color: '#FFFFFF',
+    textTransform: 'uppercase',
+    lineHeight: 30,
+    letterSpacing: -0.4,
+    alignSelf: 'flex-start',
+    maxWidth: '92%',
     marginBottom: 4,
   },
-  statSubtitle: {
-    fontSize: 12,
-  },
-  insightsSection: {
-    paddingHorizontal: 16,
-    marginBottom: 24,
-  },
-  insightCard: {
-    padding: 16,
-    borderRadius: 12,
-    marginBottom: 12,
-    ...Platform.select({
-      ios: {
-        shadowColor: '#000',
-        shadowOffset: { width: 0, height: 2 },
-        shadowOpacity: 0.1,
-        shadowRadius: 4,
-      },
-      android: {
-        elevation: 2,
-      },
-    }),
-  },
-  insightHeader: {
+  completedBadgeRow: {
     flexDirection: 'row',
     alignItems: 'center',
-    marginBottom: 8,
-    gap: 8,
+    gap: 6,
+    marginBottom: 4,
   },
-  insightTitle: {
-    fontSize: 16,
+  completedDot: {
+    width: 8,
+    height: 8,
+    borderRadius: 4,
+    backgroundColor: 'rgba(255,255,255,0.35)',
+  },
+  completedBadgeText: {
+    fontSize: 11,
+    fontWeight: '800',
+    color: 'rgba(255,255,255,0.55)',
+    letterSpacing: 1.2,
+  },
+  completedSep: {
+    fontSize: 11,
+    color: 'rgba(255,255,255,0.25)',
+  },
+  completedDate: {
+    fontSize: 11,
     fontWeight: '600',
+    color: 'rgba(255,255,255,0.45)',
   },
-  insightText: {
-    fontSize: 14,
-    lineHeight: 20,
-  },
-
-  errorContainer: {
-    flex: 1,
-    justifyContent: 'center',
+  venueRow: {
+    flexDirection: 'row',
     alignItems: 'center',
+    gap: 6,
+    marginBottom: 4,
   },
-  errorText: {
-    fontSize: 18,
-    fontWeight: '600',
-  },
-  loadingContainer: {
+  venueText: {
     flex: 1,
-    justifyContent: 'center',
+    fontSize: 12,
+    color: 'rgba(255,255,255,0.35)',
+    fontWeight: '500',
+  },
+  emptyCheckIns: {
+    fontSize: 13,
+    color: 'rgba(255,255,255,0.35)',
+    textAlign: 'center',
+    fontWeight: '500',
+  },
+  centered: {
+    flex: 1,
     alignItems: 'center',
+    justifyContent: 'center',
+    gap: 16,
   },
   loadingText: {
+    fontSize: 14,
+    color: 'rgba(255,255,255,0.45)',
+    fontWeight: '500',
+  },
+  errorText: {
     fontSize: 16,
-    textAlign: 'center',
+    color: '#FFFFFF',
+    fontWeight: '600',
   },
 });
 

@@ -424,7 +424,7 @@ const OrganizerProfileScreen = ({ route, navigation }) => {
           </TouchableOpacity>
           <Text style={styles.headerTitle}>Organizer Profile</Text>
           <TouchableOpacity style={styles.shareButton}>
-            <Icon name="share-2" type="feather" color="#fff" size={24} />
+            <Icon name="share" type="feather" color="#fff" size={24} />
           </TouchableOpacity>
         </View>
       
@@ -830,6 +830,7 @@ const styles = StyleSheet.create({
     textShadowColor: 'rgba(0, 0, 0, 0.5)',
     textShadowOffset: { width: 0, height: 1 },
     textShadowRadius: 2,
+    textTransform: 'uppercase',
   },
   eventDetails: {
     gap: 12,

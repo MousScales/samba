@@ -368,6 +368,7 @@ const styles = StyleSheet.create({
     fontSize: 18,
     fontWeight: '600',
     textAlign: 'center',
+    textTransform: 'uppercase',
   },
   headerRight: {
     flexDirection: 'row',

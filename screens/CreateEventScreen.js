@@ -12,12 +12,13 @@ import {
   Dimensions,
   FlatList,
   Animated,
-  Alert
+  Alert,
+  ActivityIndicator,
 } from 'react-native';
 import { Text, Button, Input, Icon, useTheme, Divider } from '@rneui/themed';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import * as ImagePicker from 'expo-image-picker';
-import * as Location from 'expo-location';
+import { pickImageFromLibrary } from '../utils/pickImage';
+import { uploadImages } from '../services/imageService';
 import DateTimePicker from '@react-native-community/datetimepicker';
 import { Menu, TouchableRipple } from 'react-native-paper';
 import { LinearGradient } from 'expo-linear-gradient';
@@ -25,6 +26,7 @@ import CustomNavBar from '../components/CustomNavBar';
 import { StatusBar } from 'expo-status-bar';
 import { useAuth } from '../context/AuthContext';
 import { useEvents } from '../context/EventsContext';
+import { useLanguage } from '../context/LanguageContext';
 
 const EVENT_CATEGORIES = [
   { label: 'Music & Concerts', value: 'music', icon: 'music' },
@@ -112,18 +114,21 @@ const TicketTypeItem = ({
   addIncludeItem,
   updateIncludeItem,
   removeIncludeItem,
-  viewMode
+  viewMode,
+  toggleTicketFree,
 }) => {
-  const [priceAnimation] = useState(new Animated.Value(ticket.price === 'Free' ? 1 : 0));
+  const { t } = useLanguage();
+  const free = isTicketFree(ticket);
+  const [priceAnimation] = useState(new Animated.Value(free ? 1 : 0));
   const [quantityAnimation] = useState(new Animated.Value(ticket.isUnlimited ? 1 : 0));
 
   useEffect(() => {
     Animated.timing(priceAnimation, {
-      toValue: ticket.price === 'Free' ? 1 : 0,
+      toValue: isTicketFree(ticket) ? 1 : 0,
       duration: 300,
       useNativeDriver: false,
     }).start();
-  }, [ticket.price]);
+  }, [ticket.isFree, ticket.price]);
 
   useEffect(() => {
     Animated.timing(quantityAnimation, {
@@ -137,11 +142,12 @@ const TicketTypeItem = ({
     <View style={styles.ticketContainer}>
       <View style={styles.ticketHeader}>
         <TextInput
-          placeholder="Ticket Type (e.g., VIP, Early Bird)"
+          placeholder={t('createEvent.ticket.placeholder.type')}
           placeholderTextColor="rgba(255,255,255,0.5)"
           value={ticket.type}
           onChangeText={(text) => updateTicketType(index, 'type', text)}
           style={styles.ticketTypeInput}
+          editable={!viewMode}
         />
         
         {ticketTypes.length > 1 && (
@@ -156,7 +162,7 @@ const TicketTypeItem = ({
       
       <View style={styles.ticketDetailsContainer}>
         <View style={styles.priceSection}>
-          <Text style={styles.sectionLabel}>Price</Text>
+          <Text style={styles.sectionLabel}>{t('createEvent.ticket.label.price')}</Text>
           <View style={styles.priceInputContainer}>
             <Animated.View style={[
               styles.freeOverlay,
@@ -170,19 +176,19 @@ const TicketTypeItem = ({
                 }],
               },
             ]}>
-              <Text style={styles.overlayText}>FREE</Text>
+              <Text style={styles.overlayText}>{t('createEvent.ticket.free')}</Text>
             </Animated.View>
-            {!ticket.price || ticket.price !== 'Free' ? (
+            {!free ? (
               <View style={styles.priceInputWrapper}>
                 <Text style={styles.currencySymbol}>$</Text>
                 <TextInput
-                  placeholder="0"
+                  placeholder={t('createEvent.ticket.placeholder.price')}
                   placeholderTextColor="rgba(255,255,255,0.5)"
-                  value={ticket.price === 'Free' ? '' : ticket.price}
+                  value={ticket.price === 'Free' ? '' : String(ticket.price ?? '')}
                   onChangeText={(text) => updateTicketType(index, 'price', text)}
                   keyboardType="numeric"
                   style={styles.priceInput}
-                  editable={ticket.price !== 'Free'}
+                  editable={!free && !viewMode}
                 />
               </View>
             ) : null}
@@ -190,7 +196,7 @@ const TicketTypeItem = ({
         </View>
         
         <View style={styles.quantitySection}>
-          <Text style={styles.sectionLabel}>Quantity</Text>
+          <Text style={styles.sectionLabel}>{t('createEvent.ticket.label.quantity')}</Text>
           <View style={styles.quantityInputContainer}>
             <Animated.View style={[
               styles.unlimitedOverlay,
@@ -204,11 +210,11 @@ const TicketTypeItem = ({
                 }],
               },
             ]}>
-              <Text style={styles.overlayText}>∞</Text>
+              <Text style={styles.overlayText}>{t('common.unlimited')}</Text>
             </Animated.View>
             {!ticket.isUnlimited ? (
               <TextInput
-                placeholder="0"
+                placeholder={t('createEvent.ticket.placeholder.price')}
                 placeholderTextColor="rgba(255,255,255,0.5)"
                 value={ticket.quantity}
                 onChangeText={(text) => updateTicketType(index, 'quantity', text)}
@@ -223,18 +229,16 @@ const TicketTypeItem = ({
       <View style={styles.ticketOptionsContainer}>
         <TouchableOpacity 
           style={styles.ticketOption}
-          onPress={() => {
-            const newValue = ticket.price === 'Free' ? '' : 'Free';
-            updateTicketType(index, 'price', newValue);
-          }}
+          onPress={() => toggleTicketFree(index)}
+          disabled={viewMode}
         >
           <Icon 
-            name={ticket.price === 'Free' ? "check-square" : "square"} 
+            name={free ? "check-square" : "square"} 
             type="feather" 
             size={18} 
             color="#FFFFFF" 
           />
-          <Text style={styles.ticketOptionText}>Free Ticket</Text>
+          <Text style={styles.ticketOptionText}>{t('createEvent.ticket.option.free')}</Text>
         </TouchableOpacity>
 
         <TouchableOpacity 
@@ -247,15 +251,15 @@ const TicketTypeItem = ({
             size={18} 
             color="#FFFFFF" 
           />
-          <Text style={styles.ticketOptionText}>Unlimited Quantity</Text>
+          <Text style={styles.ticketOptionText}>{t('createEvent.ticket.option.unlimited')}</Text>
         </TouchableOpacity>
       </View>
       
       {/* Special Instructions */}
       <View style={styles.detailContainer}>
-        <Text style={styles.sectionLabel}>Special Instructions</Text>
+        <Text style={styles.sectionLabel}>{t('createEvent.ticket.label.instructions')}</Text>
         <TextInput
-          placeholder="Requirements, dress code, perks, etc."
+          placeholder={t('createEvent.ticket.placeholder.instructions')}
           placeholderTextColor="rgba(255,255,255,0.5)"
           value={ticket.instructions}
           onChangeText={(text) => updateTicketType(index, 'instructions', text)}
@@ -267,7 +271,7 @@ const TicketTypeItem = ({
       
       {/* What's Included Section */}
       <View style={styles.includesContainer}>
-        <Text style={styles.sectionLabel}>What's Included</Text>
+        <Text style={styles.sectionLabel}>{t('createEvent.ticket.label.includes')}</Text>
         
         {ticket.includes && ticket.includes.map((item, itemIndex) => (
           <View key={itemIndex} style={styles.includeItemRow}>
@@ -279,7 +283,7 @@ const TicketTypeItem = ({
               containerStyle={{ marginRight: 10 }}
             />
             <TextInput
-              placeholder="Add item that's included with this ticket"
+              placeholder={t('createEvent.ticket.placeholder.includeItem')}
               placeholderTextColor="rgba(255,255,255,0.5)"
               value={item}
               onChangeText={(text) => updateIncludeItem(index, itemIndex, text)}
@@ -305,32 +309,58 @@ const TicketTypeItem = ({
             color="#FFFFFF"
             containerStyle={{ marginRight: 8 }}
           />
-          <Text style={styles.addIncludeText}>Add Included Item</Text>
+          <Text style={styles.addIncludeText}>{t('createEvent.ticket.button.addInclude')}</Text>
         </TouchableOpacity>
       </View>
     </View>
   );
 };
 
+const isTicketFree = (ticket) =>
+  !!ticket?.isFree || ticket?.price === 'Free' || ticket?.price === 0 || ticket?.price === '0';
+
+const normalizeTicketForForm = (ticket) => {
+  const free = isTicketFree(ticket);
+  const unlimited = !!ticket?.isUnlimited || ticket?.quantity === Infinity;
+  return {
+    id: ticket?.id,
+    type: ticket?.type || ticket?.name || '',
+    price: free ? 'Free' : String(ticket?.price ?? ''),
+    isFree: free,
+    quantity: unlimited ? '' : String(ticket?.quantity ?? ticket?.availableQuantity ?? ''),
+    isUnlimited: unlimited,
+    instructions: ticket?.instructions || '',
+    includes: ticket?.includes || [],
+  };
+};
+
 const initialTicketType = {
   type: '',
   price: '',
+  isFree: false,
   quantity: '',
   isUnlimited: false,
   instructions: '',
   includes: [],
 };
 
-const CreateEventScreen = ({ navigation, route }) => {
+const CreateEventScreen = ({ navigation, route, forcedMode = null }) => {
   const { theme } = useTheme();
   const { user } = useAuth();
-  const { addEvent } = useEvents();
+  const { addEvent, updateEvent, startEventLive, logActivity, getEventById } = useEvents();
+  const { t, locale } = useLanguage();
   const scrollViewRef = useRef(null);
   const screenWidth = Dimensions.get('window').width;
-  
-  // Get view mode and event data from route params
-  const viewMode = route.params?.viewMode || false;
-  const existingEvent = route.params?.event || null;
+
+  const editMode = forcedMode === 'edit' || route.params?.editMode || false;
+  const viewMode = forcedMode === 'edit' ? false : (forcedMode === 'view' || route.params?.viewMode || false);
+  const paramEvent = route.params?.event || null;
+  const existingEvent = (paramEvent?.id ? getEventById(paramEvent.id) : null) || paramEvent;
+  const isUpcoming = existingEvent
+    && existingEvent.status !== 'live'
+    && existingEvent.status !== 'completed'
+    && !existingEvent.startedEarly
+    && !existingEvent.liveStartedAt;
   
   // Event data state
   const [eventTitle, setEventTitle] = useState(existingEvent?.title || '');
@@ -348,27 +378,74 @@ const CreateEventScreen = ({ navigation, route }) => {
   const [city, setCity] = useState(existingEvent?.address?.city || '');
   const [state, setState] = useState(existingEvent?.address?.state || '');
   const [zipCode, setZipCode] = useState(existingEvent?.address?.zipCode || '');
+  const [addrSuggestions, setAddrSuggestions] = useState([]);
+  const [addrLoading, setAddrLoading] = useState(false);
+  const [addrInputLayout, setAddrInputLayout] = useState(null);
+  const addrInputRef = useRef(null);
   const [description, setDescription] = useState(existingEvent?.description || '');
   const [flyers, setFlyers] = useState(existingEvent?.flyers || []);
   const [hasEndTime, setHasEndTime] = useState(existingEvent?.endTime ? true : false);
   const [showOnExplore, setShowOnExplore] = useState(existingEvent?.showOnExplore !== false); // Default to true for new events
   
   // Ticket data
-  const [ticketTypes, setTicketTypes] = useState(
-    existingEvent?.tickets || [{ ...initialTicketType }]
+  const [ticketTypes, setTicketTypes] = useState(() =>
+    existingEvent?.tickets?.length
+      ? existingEvent.tickets.map(normalizeTicketForForm)
+      : [{ ...initialTicketType }]
   );
 
-  // Update header title based on mode
+  const [saveStatus, setSaveStatus] = useState('idle'); // idle | saving | saved | error
+  const formReady = useRef(false);
+  const savingRef = useRef(false);
+  const saveTimerRef = useRef(null);
+  const skipSaveOnLeaveRef = useRef(false);
+  const savedTimerRef = useRef(null);
+  const lastGeocodedAddress = useRef('');
+
+  const showSaved = () => {
+    if (savedTimerRef.current) clearTimeout(savedTimerRef.current);
+    setSaveStatus('saved');
+    savedTimerRef.current = setTimeout(() => setSaveStatus('idle'), 2000);
+  };
+
+  // Re-hydrate form when opening a different event to edit
   useEffect(() => {
-    navigation.setOptions({
-      headerTitle: viewMode ? 'Event Details' : 'Create Event',
-      headerRight: () => viewMode ? null : (
-        <TouchableOpacity onPress={handleCreateEvent}>
-          <Text style={styles.headerButton}>Create</Text>
-        </TouchableOpacity>
-      )
-    });
-  }, [navigation, viewMode]);
+    if (!editMode || !existingEvent?.id) return;
+    formReady.current = false;
+    setEventTitle(existingEvent.title || '');
+    setEventDate(existingEvent.date ? new Date(existingEvent.date) : new Date());
+    setStartTime(existingEvent.startTime ? new Date(existingEvent.startTime) : new Date());
+    setEndTime(existingEvent.endTime ? new Date(existingEvent.endTime) : new Date());
+    setVenue(existingEvent.venue || '');
+    setStreet(existingEvent.address?.street || '');
+    setCity(existingEvent.address?.city || '');
+    setState(existingEvent.address?.state || '');
+    setZipCode(existingEvent.address?.zipCode || '');
+    setDescription(existingEvent.description || '');
+    setFlyers(existingEvent.flyers || []);
+    setHasEndTime(!!existingEvent.endTime);
+    setShowOnExplore(existingEvent.showOnExplore !== false);
+    setTicketTypes(
+      existingEvent.tickets?.length
+        ? existingEvent.tickets.map(normalizeTicketForForm)
+        : [{ ...initialTicketType }]
+    );
+    lastGeocodedAddress.current = [
+      existingEvent.address?.street,
+      existingEvent.address?.city,
+      existingEvent.address?.state,
+      existingEvent.address?.zipCode,
+    ].filter(Boolean).join(', ');
+    const readyTimer = setTimeout(() => { formReady.current = true; }, 450);
+    return () => clearTimeout(readyTimer);
+  }, [editMode, existingEvent?.id]);
+
+  // Cleanup timers on unmount
+  useEffect(() => () => {
+    clearInterval(typewriterRef.current);
+    if (saveTimerRef.current) clearTimeout(saveTimerRef.current);
+    if (savedTimerRef.current) clearTimeout(savedTimerRef.current);
+  }, []);
 
   // Common input props for view mode
   const getInputProps = (value) => ({
@@ -425,45 +502,24 @@ const CreateEventScreen = ({ navigation, route }) => {
   
   // Image picker
   const pickImage = async () => {
-    try {
-      // Request permissions first
-      const { status } = await ImagePicker.requestMediaLibraryPermissionsAsync();
-      if (status !== 'granted') {
-        alert('Sorry, we need camera roll permissions to upload a flyer!');
-        return;
-      }
-
-    const result = await ImagePicker.launchImageLibraryAsync({
-      mediaTypes: ImagePicker.MediaTypeOptions.Images,
-      allowsEditing: true,
-        aspect: [1, 1],
-        quality: 0.8,
-    });
-
-    if (!result.canceled) {
-        // Add the new image to the array
-        setFlyers(currentFlyers => [...currentFlyers, result.assets[0].uri]);
-    }
-    } catch (error) {
-      console.log('Error picking image:', error);
-      alert('There was a problem selecting the image. Please try again.');
+    const uri = await pickImageFromLibrary();
+    if (uri) {
+      setFlyers((currentFlyers) => [...currentFlyers, uri]);
     }
   };
-  
+
   // Format time to display
   const formatTime = (date) => {
-    return date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+    return date.toLocaleTimeString(locale, { hour: '2-digit', minute: '2-digit' });
   };
   
-  // Format date to display
   const formatDate = (date) => {
     const options = { weekday: 'long', month: 'short', day: 'numeric' };
-    return date.toLocaleDateString([], options);
+    return date.toLocaleDateString(locale, options);
   };
   
-  // Update the text formatting for end time to make it shorter
   const formatEndTimeText = (endTime) => {
-    if (!endTime) return 'End (optional)';
+    if (!endTime) return t('createEvent.label.setTime');
     return formatTime(endTime);
   };
 
@@ -471,14 +527,34 @@ const CreateEventScreen = ({ navigation, route }) => {
   const addTicketType = () => {
     setTicketTypes([
       ...ticketTypes,
-      { type: '', price: '', quantity: '', instructions: '', includes: [], isUnlimited: false }
+      { ...initialTicketType },
     ]);
   };
 
   const updateTicketType = (index, field, value) => {
-    const newTicketTypes = [...ticketTypes];
-    newTicketTypes[index] = { ...newTicketTypes[index], [field]: value };
-    setTicketTypes(newTicketTypes);
+    setTicketTypes(prev => {
+      const next = [...prev];
+      const updated = { ...next[index], [field]: value };
+      if (field === 'price' && value !== 'Free' && value !== '') {
+        updated.isFree = false;
+      }
+      next[index] = updated;
+      return next;
+    });
+  };
+
+  const toggleTicketFree = (index) => {
+    setTicketTypes(prev => {
+      const next = [...prev];
+      const ticket = next[index];
+      const makingFree = !isTicketFree(ticket);
+      next[index] = {
+        ...ticket,
+        isFree: makingFree,
+        price: makingFree ? 'Free' : '',
+      };
+      return next;
+    });
   };
   
   const removeTicketType = (index) => {
@@ -534,130 +610,323 @@ const CreateEventScreen = ({ navigation, route }) => {
     }
   };
   
-  // Handle create event
-  const handleCreateEvent = async () => {
-    // Validate and submit event data
-    const requiredFields = [];
-    
-    if (!eventTitle.trim()) requiredFields.push('Event Title');
-    if (!venue.trim()) requiredFields.push('Venue Name');
-    if (!street.trim()) requiredFields.push('Street Address');
-    if (!city.trim()) requiredFields.push('City');
-    if (!state.trim()) requiredFields.push('State');
-    if (!zipCode.trim()) requiredFields.push('ZIP Code');
-    if (flyers.length === 0) requiredFields.push('At least one flyer image');
-    
-    // Check if at least one ticket type has all required information
-    const hasValidTicket = ticketTypes.some(ticket => 
-      ticket.type.trim() && 
-      (ticket.price.trim() || ticket.price === 'Free') && 
-      (ticket.isUnlimited || ticket.quantity.trim())
-    );
-    
-    if (!hasValidTicket) requiredFields.push('At least one complete ticket type');
-    
-    if (requiredFields.length > 0) {
-      Alert.alert(
-        "Missing Information",
-        `Please fill in the following required fields:\n${requiredFields.join('\n')}`,
-        [{ text: "OK" }]
-      );
-      return;
-    }
-
-    // Generate a random 6-digit verification code
-    const verificationCode = Math.floor(100000 + Math.random() * 900000).toString();
-    
-    // Format tickets data
-    const formattedTickets = ticketTypes
-      .filter(ticket => ticket.type.trim() && (ticket.price.trim() || ticket.price === 'Free'))
-      .map(ticket => ({
-        name: ticket.type.trim(),
-        price: ticket.price === 'Free' ? 0 : parseFloat(ticket.price),
-        isFree: ticket.price === 'Free',
-        quantity: ticket.isUnlimited ? Infinity : parseInt(ticket.quantity, 10),
-        isUnlimited: ticket.isUnlimited,
-        availableQuantity: ticket.isUnlimited ? Infinity : parseInt(ticket.quantity, 10),
-        sold: 0,
-        instructions: ticket.instructions.trim(),
-        includes: ticket.includes.filter(item => item.trim()),
-      }));
-
-    // Geocode the address to get coordinates
-    let coordinates = null;
+  // ── Address autocomplete ─────────────────────────────────────────────────────
+  const searchAddress = async (text) => {
+    setStreet(text);
+    // Keep position accurate as the user types
+    addrInputRef.current?.measureInWindow((x, y, w, h) => {
+      setAddrInputLayout({ x, y, w, h });
+    });
+    if (text.trim().length < 2) { setAddrSuggestions([]); return; }
+    setAddrLoading(true);
     try {
-      const fullAddress = `${street.trim()}, ${city.trim()}, ${state.trim()} ${zipCode.trim()}`;
-      const geocodedLocation = await Location.geocodeAsync(fullAddress);
-      
-      if (geocodedLocation && geocodedLocation.length > 0) {
-        coordinates = {
-          latitude: geocodedLocation[0].latitude,
-          longitude: geocodedLocation[0].longitude,
+      const GOOGLE_KEY = process.env.EXPO_PUBLIC_GOOGLE_MAPS_API_KEY;
+      const res  = await fetch(
+        `https://maps.googleapis.com/maps/api/place/autocomplete/json?input=${encodeURIComponent(text)}&types=address&language=en&key=${GOOGLE_KEY}`
+      );
+      const data = await res.json();
+      setAddrSuggestions(data.predictions ?? []);
+    } catch {
+      setAddrSuggestions([]);
+    } finally {
+      setAddrLoading(false);
+    }
+  };
+
+  const typewriterRef = useRef(null);
+
+  const selectAddress = async (prediction) => {
+    setAddrSuggestions([]);
+
+    // Full human-readable address to type out
+    const fullAddr = prediction.description || prediction.structured_formatting?.main_text || '';
+
+    // Typewriter animation — adds one character every 18ms
+    setStreet('');
+    let i = 0;
+    clearInterval(typewriterRef.current);
+    typewriterRef.current = setInterval(() => {
+      i++;
+      setStreet(fullAddr.slice(0, i));
+      if (i >= fullAddr.length) clearInterval(typewriterRef.current);
+    }, 18);
+
+    // Fetch full address components in background to split later
+    try {
+      const GOOGLE_KEY = process.env.EXPO_PUBLIC_GOOGLE_MAPS_API_KEY;
+      const res  = await fetch(
+        `https://maps.googleapis.com/maps/api/place/details/json?place_id=${prediction.place_id}&fields=address_components&key=${GOOGLE_KEY}`
+      );
+      const data = await res.json();
+      const comps = data.result?.address_components ?? [];
+      const get   = (type) => comps.find(c => c.types.includes(type));
+      setCity(get('locality')?.long_name || get('sublocality')?.long_name || get('administrative_area_level_2')?.long_name || '');
+      setState(get('administrative_area_level_1')?.short_name || '');
+      setZipCode(get('postal_code')?.long_name || '');
+    } catch { /* keep full address string, split later */ }
+  };
+
+  const formatTicketsForSave = (strict = true) =>
+    ticketTypes
+      .filter(ticket => {
+        if (!(ticket.type || '').trim() && !ticket.id) return false;
+        if (!strict) return true;
+        return (
+          (ticket.type || '').trim() &&
+          (isTicketFree(ticket) || String(ticket.price ?? '').trim())
+        );
+      })
+      .map(ticket => {
+        const free = isTicketFree(ticket);
+        const qty = ticket.isUnlimited
+          ? Infinity
+          : (parseInt(ticket.quantity, 10) || 0);
+        const existing = existingEvent?.tickets?.find(et =>
+          (ticket.id && et.id === ticket.id) ||
+          et.name === (ticket.type || '').trim()
+        );
+        const sold = existing?.sold || 0;
+        const name = (ticket.type || '').trim() || existing?.name || 'Ticket';
+        return {
+          id: ticket.id || existing?.id || `t_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`,
+          name,
+          price: free ? 0 : (parseFloat(ticket.price) || 0),
+          isFree: free,
+          quantity: qty,
+          isUnlimited: ticket.isUnlimited,
+          availableQuantity: ticket.isUnlimited ? Infinity : Math.max(0, qty - sold),
+          sold,
+          instructions: (ticket.instructions || '').trim(),
+          includes: (ticket.includes || []).filter(item => item.trim()),
         };
-        console.log('📍 Geocoded event address:', fullAddress, coordinates);
+      });
+
+  const buildEventData = async ({ strict = true, geocode = true } = {}) => {
+    const verificationCode = Math.floor(100000 + Math.random() * 900000).toString();
+    const formattedTickets = formatTicketsForSave(strict);
+
+    let coordinates = existingEvent?.address?.coordinates || null;
+    const fullAddress = `${street.trim()}, ${city.trim()}, ${state.trim()} ${zipCode.trim()}`.trim();
+    if (geocode && street.trim() && fullAddress !== lastGeocodedAddress.current) {
+      try {
+        const GOOGLE_KEY = process.env.EXPO_PUBLIC_GOOGLE_MAPS_API_KEY;
+        const geoRes = await fetch(
+          `https://maps.googleapis.com/maps/api/geocode/json?address=${encodeURIComponent(fullAddress)}&key=${GOOGLE_KEY}`
+        );
+        const geoData = await geoRes.json();
+        const loc = geoData.results?.[0]?.geometry?.location;
+        if (loc) {
+          coordinates = { latitude: loc.lat, longitude: loc.lng };
+          lastGeocodedAddress.current = fullAddress;
+        }
+      } catch (error) {
+        console.warn('⚠️ Failed to geocode address:', error);
       }
-    } catch (error) {
-      console.warn('⚠️ Failed to geocode address:', error);
-      // Continue without coordinates - event will still work but won't appear in location-based searches
     }
 
-    // Prepare the event data
-    const eventData = {
+    const eventId = existingEvent?.id || `${Date.now()}${Math.random().toString(36).substr(2, 9)}`;
+    const persistedFlyers = await uploadImages(flyers, {
+      userId: user?.id,
+      folder: `events/${eventId}`,
+    });
+
+    const totalSpots = formattedTickets.reduce((total, ticket) =>
+      total + (ticket.isUnlimited ? 0 : ticket.quantity), 0);
+    const bookedSpots = existingEvent?.bookedSpots || 0;
+    const latestEvent = eventId ? getEventById(eventId) : null;
+    const persisted = latestEvent || existingEvent;
+    const isLiveEvent = persisted?.status === 'live' || persisted?.startedEarly || persisted?.liveStartedAt;
+
+    return {
+      id: eventId,
       title: eventTitle.trim(),
       date: eventDate,
-      startTime: startTime,
+      startTime: isLiveEvent && persisted?.startTime ? new Date(persisted.startTime) : startTime,
       endTime: hasEndTime ? endTime : null,
-      hasEndTime: hasEndTime,
+      hasEndTime,
       venue: venue.trim(),
       address: {
         street: street.trim(),
         city: city.trim(),
         state: state.trim(),
         zipCode: zipCode.trim(),
-        formatted: `${street.trim()}, ${city.trim()}, ${state.trim()} ${zipCode.trim()}`,
-        coordinates: coordinates
+        formatted: fullAddress,
+        coordinates,
       },
       description: description.trim(),
-      coverImage: flyers[0],
-      flyers: flyers,
+      coverImage: persistedFlyers[0],
+      flyers: persistedFlyers,
       tickets: formattedTickets,
-      organizer: {
+      organizer: existingEvent?.organizer || {
         id: user?.id,
         name: user?.providerInfo?.organizationName || user?.name,
         organizationName: user?.providerInfo?.organizationName,
-        profilePicture: user?.profilePicture || user?.providerInfo?.partyLogo,
+        profilePicture: user?.providerInfo?.partyLogo,
         description: user?.providerInfo?.description,
         contactEmail: user?.providerInfo?.partyEmail,
-        contactPhone: user?.providerInfo?.partyPhone
+        contactPhone: user?.providerInfo?.partyPhone,
       },
       organizerId: user?.id,
-      createdAt: new Date(),
+      createdAt: existingEvent?.createdAt || new Date(),
       updatedAt: new Date(),
-      status: 'upcoming',
-      ticketSalesOpen: true,
-      showOnExplore: showOnExplore, // Add visibility option for Explore page
-      totalSpots: formattedTickets.reduce((total, ticket) => 
-        total + (ticket.isUnlimited ? 0 : ticket.quantity), 0),
-      spotsLeft: formattedTickets.reduce((total, ticket) => 
-        total + (ticket.isUnlimited ? 0 : ticket.quantity), 0),
-      bookedSpots: 0,
-      verificationCode: verificationCode // Add verification code to event data
+      status: isLiveEvent ? 'live' : (persisted?.status || 'upcoming'),
+      startedEarly: isLiveEvent ? true : (persisted?.startedEarly ?? false),
+      ...(isLiveEvent ? { liveStartedAt: persisted?.liveStartedAt || persisted?.startTime } : {}),
+      ticketSalesOpen: existingEvent?.ticketSalesOpen ?? true,
+      showOnExplore,
+      totalSpots,
+      spotsLeft: Math.max(0, totalSpots - bookedSpots),
+      bookedSpots,
+      verificationCode: existingEvent?.verificationCode || verificationCode,
+      guestList: existingEvent?.guestList,
     };
-    
+  };
+
+  const saveEditEvent = async () => {
+    if (!editMode || !existingEvent?.id || savingRef.current) return;
+    if (!eventTitle.trim()) return;
+
+    const latest = getEventById(existingEvent.id);
+    if (latest?.status === 'live' || latest?.startedEarly || latest?.liveStartedAt) return;
+
+    savingRef.current = true;
+    setSaveStatus('saving');
     try {
-      // Add event using the context function
+      const eventData = await buildEventData({ strict: false, geocode: true });
+      await updateEvent(existingEvent.id, eventData);
+      showSaved();
+    } catch (error) {
+      console.error('Error auto-saving event:', error);
+      setSaveStatus('error');
+    } finally {
+      savingRef.current = false;
+    }
+  };
+
+  // Auto-save while editing (debounced) — never while event is live
+  useEffect(() => {
+    if (!editMode || !formReady.current) return undefined;
+
+    const latest = existingEvent?.id ? getEventById(existingEvent.id) : null;
+    if (latest?.status === 'live' || latest?.startedEarly || latest?.liveStartedAt) return undefined;
+
+    if (saveTimerRef.current) clearTimeout(saveTimerRef.current);
+    saveTimerRef.current = setTimeout(() => {
+      saveEditEvent();
+    }, 800);
+
+    return () => {
+      if (saveTimerRef.current) clearTimeout(saveTimerRef.current);
+    };
+  }, [
+    editMode,
+    eventTitle,
+    eventDate,
+    startTime,
+    endTime,
+    hasEndTime,
+    venue,
+    street,
+    city,
+    state,
+    zipCode,
+    description,
+    flyers,
+    showOnExplore,
+    ticketTypes,
+  ]);
+
+  // Flush save when leaving edit screen (skip if event was just started live)
+  useEffect(() => {
+    if (!editMode) return undefined;
+    const unsub = navigation.addListener('beforeRemove', () => {
+      if (skipSaveOnLeaveRef.current) return;
+      const latest = existingEvent?.id ? getEventById(existingEvent.id) : null;
+      if (latest?.status === 'live' || latest?.startedEarly || latest?.liveStartedAt) return;
+      if (formReady.current && eventTitle.trim()) {
+        saveEditEvent();
+      }
+    });
+    return unsub;
+  }, [navigation, editMode, eventTitle]);
+
+  const handleCreateEvent = async () => {
+    const requiredFields = [];
+
+    if (!eventTitle.trim()) requiredFields.push(t('createEvent.validation.eventTitle'));
+    if (!venue.trim()) requiredFields.push(t('createEvent.validation.venue'));
+    if (!street.trim()) requiredFields.push(t('createEvent.validation.street'));
+    if (flyers.length === 0) requiredFields.push(t('createEvent.validation.flyer'));
+
+    const hasValidTicket = ticketTypes.some(ticket =>
+      (ticket.type || '').trim() &&
+      (isTicketFree(ticket) || String(ticket.price ?? '').trim()) &&
+      (ticket.isUnlimited || String(ticket.quantity ?? '').trim())
+    );
+
+    if (!hasValidTicket) requiredFields.push(t('createEvent.validation.ticket'));
+
+    if (requiredFields.length > 0) {
+      Alert.alert(
+        t('createEvent.alert.missing.title'),
+        t('createEvent.alert.missing.message', { fields: requiredFields.join('\n') }),
+        [{ text: t('common.ok') }]
+      );
+      return;
+    }
+
+    try {
+      const eventData = await buildEventData({ strict: true, geocode: true });
       const newEvent = await addEvent(eventData);
-      
-      // Navigate to confirmation screen with event data
       navigation.navigate('EventConfirmation', { eventData: newEvent });
     } catch (error) {
       console.error('Error creating event:', error);
       Alert.alert(
-        "Error",
-        "There was a problem creating your event. Please try again.",
-        [{ text: "OK" }]
+        t('common.error'),
+        t('createEvent.alert.createFailed'),
+        [{ text: t('common.ok') }]
       );
     }
+  };
+
+  const handleStartEarly = () => {
+    if (!existingEvent || !isUpcoming) return;
+
+    Alert.alert(
+      t('createEvent.alert.startEarly.title'),
+      t('createEvent.alert.startEarly.message'),
+      [
+        { text: t('common.cancel'), style: 'cancel' },
+        {
+          text: t('createEvent.alert.startEarly.confirm'),
+          onPress: async () => {
+            try {
+              if (saveTimerRef.current) clearTimeout(saveTimerRef.current);
+              skipSaveOnLeaveRef.current = true;
+
+              const liveEvent = await startEventLive(existingEvent.id);
+              await logActivity(existingEvent.id, {
+                type: 'event_started',
+                icon: 'play',
+                text: 'Event started early by host',
+                hostName: user?.providerInfo?.organizationName || user?.name || 'Host',
+                avatar: user?.providerInfo?.partyLogo || user?.profilePicture || null,
+              });
+              navigation.reset({
+                index: 1,
+                routes: [
+                  { name: 'ManageEvents', params: { initialTab: 'live' } },
+                  { name: 'LiveEventStats', params: { event: liveEvent } },
+                ],
+              });
+            } catch (error) {
+              console.error('Error starting event early:', error);
+              Alert.alert(t('common.error'), t('createEvent.alert.startEarly.failed'));
+            }
+          },
+        },
+      ],
+    );
   };
 
     return (
@@ -672,13 +941,56 @@ const CreateEventScreen = ({ navigation, route }) => {
       
       <SafeAreaView style={styles.safeArea}>
         <View style={styles.header}>
-          <TouchableOpacity onPress={() => navigation.navigate('Profile')}>
-            <Text style={styles.cancelButton}>Cancel</Text>
-          </TouchableOpacity>
-          
-          <Text style={styles.headerTitle}>New Event</Text>
-          
-          <View style={styles.headerRight} />
+          <View style={styles.headerSide}>
+            <TouchableOpacity
+              onPress={() => (editMode || viewMode ? navigation.goBack() : navigation.navigate('ManageEvents'))}
+              hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+            >
+              <Text style={styles.cancelButton}>{t('common.cancel')}</Text>
+            </TouchableOpacity>
+          </View>
+
+          <View style={styles.headerCenter}>
+            <Text style={styles.headerTitle} numberOfLines={1}>
+              {editMode
+                ? t('createEvent.header.editTitle')
+                : viewMode
+                  ? t('createEvent.header.viewTitle')
+                  : t('createEvent.header.newEvent')}
+            </Text>
+            {editMode && saveStatus !== 'idle' && (
+              <View style={styles.saveIndicator}>
+                {saveStatus === 'saving' && (
+                  <>
+                    <ActivityIndicator size="small" color="#4ade80" />
+                    <Text style={styles.saveText}>{t('editProfile.saving')}</Text>
+                  </>
+                )}
+                {saveStatus === 'saved' && (
+                  <>
+                    <Icon name="check" type="feather" size={12} color="#4ade80" />
+                    <Text style={[styles.saveText, styles.saveTextSuccess]}>{t('editProfile.saved')}</Text>
+                  </>
+                )}
+                {saveStatus === 'error' && (
+                  <Text style={[styles.saveText, styles.saveTextError]}>{t('editProfile.saveError')}</Text>
+                )}
+              </View>
+            )}
+          </View>
+
+          <View style={[styles.headerSide, styles.headerSideRight]}>
+            {editMode && isUpcoming && (
+              <TouchableOpacity
+                style={styles.headerStartEarly}
+                onPress={handleStartEarly}
+                activeOpacity={0.85}
+                hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+              >
+                <Text style={styles.headerStartEarlyText}>{t('createEvent.button.start')}</Text>
+              </TouchableOpacity>
+            )}
+          </View>
         </View>
         
         <KeyboardAvoidingView 
@@ -707,7 +1019,7 @@ const CreateEventScreen = ({ navigation, route }) => {
                     onPress={pickImage}
               >
                     <Icon name="edit-2" type="feather" size={16} color="#FFFFFF" />
-                    <Text style={styles.editText}>edit</Text>
+                    <Text style={styles.editText}>{t('createEvent.image.edit')}</Text>
               </TouchableOpacity>
             </View>
               ) : (
@@ -716,28 +1028,30 @@ const CreateEventScreen = ({ navigation, route }) => {
                 onPress={pickImage}
               >
                   <Icon name="image" type="feather" size={40} color="#FFFFFF" />
-                  <Text style={styles.addImageText}>Add Cover Image</Text>
+                  <Text style={styles.addImageText}>{t('createEvent.image.addCover')}</Text>
               </TouchableOpacity>
               )}
               
               <View style={styles.hostInfoContainer}>
                 <View style={styles.hostInfo}>
-                  {user?.profilePicture ? (
+                  {user?.providerInfo?.partyLogo ? (
                     <Image 
-                      source={{ uri: user.profilePicture }}
+                      source={{ uri: user.providerInfo.partyLogo }}
                       style={styles.hostAvatar}
                     />
                   ) : (
                     <View style={[styles.hostAvatar, styles.initialsContainer]}>
                       <Text style={styles.initialsText}>
-                        {user?.name ? user.name.split(' ').map(n => n[0]).join('').toUpperCase().slice(0, 2) : 'A'}
+                        {(user?.providerInfo?.organizationName || user?.name || 'A')
+                          .split(' ').map(n => n[0]).join('').toUpperCase().slice(0, 2)}
                       </Text>
                     </View>
                   )}
                   <Text style={styles.hostedByText}>
-                    Hosted by {user?.providerInfo?.organizationName || user?.name || 'Anonymous'}
+                    {t('createEvent.hostedBy', {
+                      name: user?.providerInfo?.organizationName || user?.name || t('createEvent.host.anonymous'),
+                    })}
                   </Text>
-                  <Icon name="chevron-down" type="feather" size={16} color="#FFFFFF" />
                 </View>
               </View>
             </View>
@@ -746,7 +1060,7 @@ const CreateEventScreen = ({ navigation, route }) => {
             <View style={styles.inputSection}>
               <TextInput
                 style={styles.titleInput}
-                placeholder="Event Title"
+                placeholder={t('createEvent.placeholder.title')}
                 placeholderTextColor="rgba(255,255,255,0.6)"
                 value={eventTitle}
                 onChangeText={setEventTitle}
@@ -768,7 +1082,7 @@ const CreateEventScreen = ({ navigation, route }) => {
                   containerStyle={styles.inputIcon} 
                 />
                 <View style={styles.dateTimeContent}>
-                  <Text style={styles.dateTimeLabel}>Date</Text>
+                  <Text style={styles.dateTimeLabel}>{t('createEvent.label.date')}</Text>
                   <Text style={styles.dateTimeValue}>{formatDate(eventDate)}</Text>
                 </View>
               </TouchableOpacity>
@@ -789,7 +1103,7 @@ const CreateEventScreen = ({ navigation, route }) => {
                       containerStyle={styles.inputIcon} 
                     />
                     <View style={styles.timeContent}>
-                      <Text style={styles.dateTimeLabel}>Start Time</Text>
+                      <Text style={styles.dateTimeLabel}>{t('createEvent.label.startTime')}</Text>
                       <Text style={styles.dateTimeValue}>
                         {formatTime(startTime)}
                       </Text>
@@ -812,9 +1126,9 @@ const CreateEventScreen = ({ navigation, route }) => {
                         onPress={() => setShowEndTimePicker(true)}
                       >
                         <View style={styles.timeContent}>
-                          <Text style={styles.dateTimeLabel}>End Time</Text>
+                          <Text style={styles.dateTimeLabel}>{t('createEvent.label.endTime')}</Text>
                           <Text style={styles.dateTimeValue}>
-                            {endTime ? formatTime(endTime) : 'Set Time'}
+                            {endTime ? formatTime(endTime) : t('createEvent.label.setTime')}
                           </Text>
                         </View>
                       </TouchableOpacity>
@@ -837,51 +1151,23 @@ const CreateEventScreen = ({ navigation, route }) => {
                       style={styles.endTimeIcon}
                     />
                     <Text style={styles.noEndTimeText}>
-                      {hasEndTime ? "No End Time" : "Set End Time"}
+                      {hasEndTime ? t('createEvent.toggle.noEndTime') : t('createEvent.toggle.setEndTime')}
                     </Text>
                   </TouchableOpacity>
                 </View>
               </View>
             </View>
             
-            {/* Location Section */}
-            <View style={styles.inputSection}>
-              <TouchableOpacity style={styles.locationContainer} onPress={() => {}}>
-                <Icon 
-                  name="map-pin" 
-                  type="feather" 
-                  size={24} 
-                  color="#FFFFFF" 
-                  containerStyle={styles.inputIcon}
-                />
-                <View style={styles.locationContent}>
-                  <Text style={styles.locationLabel}>Set Address</Text>
-                  <Text style={styles.locationValue}>
-                    {street || city || state || zipCode ? (
-                      <>
-                        {[
-                          street,
-                          [city, state].filter(Boolean).join(', '),
-                          zipCode
-                        ].filter(Boolean).join(' • ')}
-                      </>
-                    ) : (
-                      <Text style={styles.placeholderText}>Enter address details below</Text>
-                    )}
-                  </Text>
-                </View>
-              </TouchableOpacity>
-            </View>
             
             {/* Additional Details Section */}
             <View style={styles.sectionContainer}>
-              <Text style={styles.sectionTitle}>Event Details</Text>
+              <Text style={styles.sectionTitle}>{t('createEvent.section.details')}</Text>
               
               <View style={styles.detailContainer}>
-                <Text style={styles.detailLabel}>Venue</Text>
+                <Text style={styles.detailLabel}>{t('createEvent.label.venue')}</Text>
                 <TextInput
                   style={styles.detailInput}
-                  placeholder="Venue Name"
+                  placeholder={t('createEvent.placeholder.venue')}
                   placeholderTextColor="rgba(255,255,255,0.5)"
                   value={venue}
                   onChangeText={setVenue}
@@ -889,59 +1175,41 @@ const CreateEventScreen = ({ navigation, route }) => {
               </View>
 
               <View style={styles.detailContainer}>
-                <Text style={styles.detailLabel}>Street Address</Text>
+                <Text style={styles.detailLabel}>{t('createEvent.label.address')}</Text>
                 <TextInput
+                  ref={addrInputRef}
                   style={styles.detailInput}
-                  placeholder="Enter street address"
+                  placeholder={t('createEvent.placeholder.address')}
                   placeholderTextColor="rgba(255,255,255,0.5)"
                   value={street}
-                  onChangeText={setStreet}
+                  onChangeText={searchAddress}
+                  autoCorrect={false}
+                  onLayout={() => {
+                    addrInputRef.current?.measureInWindow((x, y, w, h) => {
+                      setAddrInputLayout({ x, y, w, h });
+                    });
+                  }}
+                  onFocus={() => {
+                    // Re-measure after KAV animation settles (~350ms)
+                    setTimeout(() => {
+                      addrInputRef.current?.measureInWindow((x, y, w, h) => {
+                        setAddrInputLayout({ x, y, w, h });
+                      });
+                    }, 380);
+                  }}
                 />
               </View>
 
-              <View style={styles.addressRow}>
-                <View style={styles.cityContainer}>
-                  <Text style={styles.detailLabel}>City</Text>
-                  <TextInput
-                    style={styles.detailInput}
-                    placeholder="City"
-                    placeholderTextColor="rgba(255,255,255,0.5)"
-                    value={city}
-                    onChangeText={setCity}
-                  />
-                </View>
+              {/* placeholder — suggestions rendered outside ScrollView below */}
 
-                <View style={styles.stateContainer}>
-                  <Text style={styles.detailLabel}>State</Text>
-                  <TextInput
-                    style={styles.detailInput}
-                    placeholder="State"
-                    placeholderTextColor="rgba(255,255,255,0.5)"
-                    value={state}
-                    onChangeText={setState}
-                  />
-                </View>
-
-                <View style={styles.zipContainer}>
-                  <Text style={styles.detailLabel}>ZIP</Text>
-                  <TextInput
-                    style={styles.detailInput}
-                    placeholder="ZIP"
-                    placeholderTextColor="rgba(255,255,255,0.5)"
-                    value={zipCode}
-                    onChangeText={setZipCode}
-                    keyboardType="numeric"
-                  />
-                </View>
-              </View>
             </View>
 
             {/* Description Section */}
             <View style={styles.inputSection}>
-              <Text style={styles.sectionLabel}>Description</Text>
+              <Text style={styles.sectionLabel}>{t('createEvent.label.description')}</Text>
               <TextInput
                 style={styles.descriptionInput}
-                placeholder="Tell attendees what they can expect from your event"
+                placeholder={t('createEvent.placeholder.description')}
                 placeholderTextColor="rgba(255,255,255,0.5)"
                 value={description}
                 onChangeText={setDescription}
@@ -952,7 +1220,7 @@ const CreateEventScreen = ({ navigation, route }) => {
 
             {/* Event Visibility Section */}
             <View style={styles.inputSection}>
-              <Text style={styles.sectionLabel}>Event Visibility</Text>
+              <Text style={styles.sectionLabel}>{t('createEvent.label.visibility')}</Text>
               <TouchableOpacity 
                 style={styles.visibilityOption}
                 onPress={() => setShowOnExplore(!showOnExplore)}
@@ -964,10 +1232,9 @@ const CreateEventScreen = ({ navigation, route }) => {
                   color="#FFFFFF" 
                 />
                 <View style={styles.visibilityOptionContent}>
-                  <Text style={styles.visibilityOptionTitle}>Show on Explore page</Text>
+                  <Text style={styles.visibilityOptionTitle}>{t('createEvent.visibility.showOnExplore')}</Text>
                   <Text style={styles.visibilityOptionDescription}>
-                    Allow users to discover your event on the main Explore page. 
-                    If disabled, only people with a direct link can find your event.
+                    {t('createEvent.visibility.description')}
                   </Text>
                 </View>
               </TouchableOpacity>
@@ -975,10 +1242,10 @@ const CreateEventScreen = ({ navigation, route }) => {
             
             {/* Tickets Section */}
             <View style={styles.inputSection}>
-              <Text style={styles.sectionLabel}>Tickets</Text>
+              <Text style={styles.sectionLabel}>{t('createEvent.section.tickets')}</Text>
               {ticketTypes.map((ticket, index) => (
                 <TicketTypeItem
-                  key={index}
+                  key={ticket.id || `ticket-${index}`}
                   ticket={ticket}
                   index={index}
                   updateTicketType={updateTicketType}
@@ -988,10 +1255,11 @@ const CreateEventScreen = ({ navigation, route }) => {
                   updateIncludeItem={updateIncludeItem}
                   removeIncludeItem={removeIncludeItem}
                   viewMode={viewMode}
+                  toggleTicketFree={toggleTicketFree}
                 />
               ))}
               
-              {!viewMode && (
+              {(editMode || !viewMode) && (
                 <TouchableOpacity 
                   style={styles.addTicketButton}
                   onPress={addTicketType}
@@ -1002,22 +1270,65 @@ const CreateEventScreen = ({ navigation, route }) => {
                     size={20} 
                     color="#FFFFFF" 
                   />
-                  <Text style={styles.addTicketText}>Add Another Ticket Type</Text>
+                  <Text style={styles.addTicketText}>{t('createEvent.ticket.button.addType')}</Text>
                 </TouchableOpacity>
               )}
             </View>
 
-            {/* Next Button */}
-            <TouchableOpacity 
-              style={styles.nextButton}
-              onPress={handleCreateEvent}
-            >
-              <Text style={styles.nextButtonText}>Next</Text>
-            </TouchableOpacity>
+            {editMode && (
+              <Text style={styles.autoSaveHint}>{t('createEvent.autoSaveHint')}</Text>
+            )}
+
+            {!viewMode && !editMode && (
+              <TouchableOpacity style={styles.nextButton} onPress={handleCreateEvent}>
+                <Text style={styles.nextButtonText}>{t('common.next')}</Text>
+              </TouchableOpacity>
+            )}
           </ScrollView>
         </KeyboardAvoidingView>
       </SafeAreaView>
       
+      {/* Address autocomplete dropdown — floats above form, keyboard stays up */}
+      {addrSuggestions.length > 0 && addrInputLayout && (
+        <View
+          pointerEvents="box-none"
+          style={StyleSheet.absoluteFill}
+        >
+          <View style={[styles.addrDropdown, {
+            position: 'absolute',
+            top: addrInputLayout.y + addrInputLayout.h + 6,
+            left: addrInputLayout.x,
+            width: addrInputLayout.w,
+          }]}>
+            <ScrollView
+              keyboardShouldPersistTaps="always"
+              scrollEnabled
+              showsVerticalScrollIndicator={false}
+              style={{ maxHeight: 220 }}
+            >
+              {addrSuggestions.map((p, i) => (
+                <TouchableOpacity
+                  key={p.place_id}
+                  style={[styles.addrRow, i > 0 && styles.addrRowBorder]}
+                  onPress={() => selectAddress(p)}
+                  activeOpacity={0.6}
+                >
+                  <View style={styles.addrDot} />
+                  <View style={{ flex: 1 }}>
+                    <Text style={styles.addrMain} numberOfLines={1}>
+                      {p.structured_formatting?.main_text || p.description.split(',')[0]}
+                    </Text>
+                    <Text style={styles.addrSub} numberOfLines={1}>
+                      {p.structured_formatting?.secondary_text || ''}
+                    </Text>
+                  </View>
+                </TouchableOpacity>
+              ))}
+            </ScrollView>
+          </View>
+        </View>
+      )}
+
       {/* Date/Time Pickers */}
       {Platform.OS === 'ios' && (showDatePicker || showStartTimePicker || showEndTimePicker) && (
         <Modal
@@ -1037,7 +1348,7 @@ const CreateEventScreen = ({ navigation, route }) => {
             <View style={styles.pickerContainer}>
               <View style={styles.pickerHeader}>
                 <Text style={styles.pickerTitle}>
-                  {showDatePicker ? 'Select Date' : (showStartTimePicker ? 'Select Start Time' : 'Select End Time')}
+                  {showDatePicker ? t('createEvent.picker.selectDate') : (showStartTimePicker ? t('createEvent.picker.selectStartTime') : t('createEvent.picker.selectEndTime'))}
                 </Text>
                 <TouchableOpacity
                   onPress={() => {
@@ -1099,7 +1410,7 @@ const CreateEventScreen = ({ navigation, route }) => {
               )}
               
               <Button
-                title="Confirm"
+                title={t('common.confirm')}
                 onPress={() => {
                   if (showDatePicker) {
                     setEventDate(tempDate);
@@ -1166,23 +1477,67 @@ const styles = StyleSheet.create({
   },
   header: {
     flexDirection: 'row',
-    justifyContent: 'space-between',
     alignItems: 'center',
-    paddingHorizontal: 20,
-    paddingVertical: 16,
+    paddingHorizontal: 16,
+    paddingVertical: 14,
+  },
+  headerSide: {
+    width: 80,
+    justifyContent: 'center',
+  },
+  headerSideRight: {
+    alignItems: 'flex-end',
   },
   cancelButton: {
-    fontSize: 17,
+    fontSize: 16,
     color: '#FFFFFF',
     fontWeight: '400',
+  },
+  headerCenter: {
+    flex: 1,
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 3,
   },
   headerTitle: {
     fontSize: 17,
     fontWeight: '600',
     color: '#FFFFFF',
+    textAlign: 'center',
   },
-  headerRight: {
-    width: 70, // Match the width of the Cancel button for balance
+  saveIndicator: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 5,
+  },
+  saveText: {
+    fontSize: 11,
+    color: 'rgba(255,255,255,0.5)',
+    fontWeight: '500',
+  },
+  saveTextSuccess: {
+    color: '#4ade80',
+  },
+  saveTextError: {
+    color: '#f87171',
+  },
+  autoSaveHint: {
+    marginHorizontal: 20,
+    marginTop: 8,
+    marginBottom: 4,
+    fontSize: 12,
+    color: 'rgba(255,255,255,0.35)',
+    textAlign: 'center',
+  },
+  headerStartEarly: {
+    paddingHorizontal: 2,
+    paddingVertical: 4,
+  },
+  headerStartEarlyText: {
+    color: '#4ade80',
+    fontSize: 14,
+    fontWeight: '800',
+    letterSpacing: 0.8,
   },
   scrollView: {
     flex: 1,
@@ -1371,6 +1726,46 @@ const styles = StyleSheet.create({
   },
   detailContainer: {
     marginBottom: 16,
+  },
+  addrDropdown: {
+    backgroundColor: 'rgba(28,28,28,0.97)',
+    borderRadius: 10,
+    borderWidth: 1,
+    borderColor: 'rgba(255,255,255,0.15)',
+    overflow: 'hidden',
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.35,
+    shadowRadius: 12,
+    elevation: 10,
+  },
+  addrRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingHorizontal: 14,
+    paddingVertical: 13,
+    gap: 10,
+  },
+  addrRowBorder: {
+    borderTopWidth: 1,
+    borderTopColor: 'rgba(255,255,255,0.08)',
+  },
+  addrDot: {
+    width: 6,
+    height: 6,
+    borderRadius: 3,
+    backgroundColor: '#FF4B8C',
+    flexShrink: 0,
+  },
+  addrMain: {
+    fontSize: 14,
+    fontWeight: '500',
+    color: '#FFFFFF',
+    marginBottom: 2,
+  },
+  addrSub: {
+    fontSize: 12,
+    color: 'rgba(255,255,255,0.4)',
   },
   detailLabel: {
     fontSize: 14,

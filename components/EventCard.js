@@ -183,6 +183,7 @@ const styles = StyleSheet.create({
     textShadowColor: 'rgba(0, 0, 0, 0.5)',
     textShadowOffset: { width: 0, height: 1 },
     textShadowRadius: 2,
+    textTransform: 'uppercase',
   },
   locationRow: {
     flexDirection: 'row',

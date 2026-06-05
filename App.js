@@ -1,17 +1,28 @@
-import React from 'react';
-import { NavigationContainer } from '@react-navigation/native';
+import React, { useEffect, useState } from 'react';
+import { View, ActivityIndicator, StyleSheet } from 'react-native';
+import { NavigationContainer, createNavigationContainerRef } from '@react-navigation/native';
 import { createNativeStackNavigator } from '@react-navigation/native-stack';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
+import { useAuth } from './context/AuthContext';
 import { ThemeProvider } from '@rneui/themed';
 import { PaperProvider, configureFonts } from 'react-native-paper';
 import { StatusBar } from 'expo-status-bar';
 import { theme, paperTheme, fonts } from './theme';
+import {
+  navigationTheme,
+  defaultStackScreenOptions,
+  modalStackScreenOptions,
+  fadeStackScreenOptions,
+  tabStackScreenOptions,
+} from './config/navigation';
 import { AuthProvider } from './context/AuthContext';
 import { EventsProvider } from './context/EventsContext';
+import { LanguageProvider, useLanguage } from './context/LanguageContext';
 
 import HomeScreen from './screens/HomeScreen';
 import ExploreScreen from './screens/ExploreScreen';
 import CreateEventScreen from './screens/CreateEventScreen';
+import EditEventScreen from './screens/EditEventScreen';
 import EventConfirmationScreen from './screens/EventConfirmationScreen';
 import ProfileScreen from './screens/ProfileScreen';
 import EditProfileScreen from './screens/EditProfileScreen';
@@ -40,45 +51,62 @@ import EventStats from './screens/EventStats';
 import LiveEventStats from './screens/LiveEventStats';
 
 const Stack = createNativeStackNavigator();
+const navigationRef = createNavigationContainerRef();
 
-const App = () => {
-  const fontConfig = {
-    ...configureFonts({ config: fonts }),
-  };
+const AuthGate = ({ children }) => {
+  const { isLoading, isAuthenticated } = useAuth();
+  const [navReady, setNavReady] = useState(false);
+
+  useEffect(() => {
+    if (isLoading || !navReady || !navigationRef.isReady()) return;
+
+    const route = isAuthenticated ? 'Profile' : 'Login';
+    const current = navigationRef.getCurrentRoute()?.name;
+    if (current === route) return;
+
+    navigationRef.reset({
+      index: 0,
+      routes: [{ name: route }],
+    });
+  }, [isLoading, isAuthenticated, navReady]);
+
+  if (isLoading) {
+    return (
+      <View style={authGateStyles.loading}>
+        <ActivityIndicator size="large" color="#E0E0E0" />
+      </View>
+    );
+  }
 
   return (
-    <AuthProvider>
-      <EventsProvider>
-        <ThemeProvider theme={theme}>
-          <PaperProvider 
-            theme={{
-              ...paperTheme,
-              fonts: fontConfig,
-            }}
-          >
-            <StatusBar style="light" />
-            <SafeAreaProvider>
-              <NavigationContainer theme={theme}>
-                <Stack.Navigator 
-                  initialRouteName="Login"
-                  screenOptions={{ 
-                    headerShown: false,
-                    presentation: 'card',
-                    animationEnabled: false,
-                    animation: 'none',
-                    contentStyle: {
-                      backgroundColor: theme.colors.background
-                    },
-                    headerBackTitle: '',
-                    transitionSpec: {
-                      open: { animation: 'timing', config: { duration: 0 } },
-                      close: { animation: 'timing', config: { duration: 0 } },
-                    },
-                    cardStyleInterpolator: () => ({
-                      cardStyle: { opacity: 1 }
-                    }),
-                  }}
-                >
+    <NavigationContainer
+      ref={navigationRef}
+      theme={navigationTheme}
+      onReady={() => setNavReady(true)}
+    >
+      {children}
+    </NavigationContainer>
+  );
+};
+
+const authGateStyles = StyleSheet.create({
+  loading: {
+    flex: 1,
+    justifyContent: 'center',
+    alignItems: 'center',
+    backgroundColor: '#1a1a1a',
+  },
+});
+
+const AppNavigator = () => {
+  const { t } = useLanguage();
+
+  return (
+    <AuthGate>
+      <Stack.Navigator
+        initialRouteName="Login"
+        screenOptions={defaultStackScreenOptions}
+      >
                   <Stack.Screen name="Login" component={LoginScreen} />
                   <Stack.Screen 
                     name="VerificationCode" 
@@ -94,20 +122,12 @@ const App = () => {
                       headerShown: false,
                     }}
                   />
-                  <Stack.Screen name="Home" component={HomeScreen} />
-                  <Stack.Screen name="Explore" component={ExploreScreen} />
-                  <Stack.Screen name="Create" component={CreateEventScreen} />
-                  <Stack.Screen name="ManageEvents" component={ManageEventsScreen} />
-                  <Stack.Screen name="Dashboard" component={DashboardScreen} />
-                  <Stack.Screen 
-                    name="Profile" 
-                    component={ProfileScreen}
-                    options={{
-                      headerShown: false,
-                      presentation: 'card',
-                      animationEnabled: true,
-                    }}
-                  />
+                  <Stack.Screen name="Home" component={HomeScreen} options={tabStackScreenOptions} />
+                  <Stack.Screen name="Explore" component={ExploreScreen} options={tabStackScreenOptions} />
+                  <Stack.Screen name="Create" component={CreateEventScreen} options={tabStackScreenOptions} />
+                  <Stack.Screen name="ManageEvents" component={ManageEventsScreen} options={tabStackScreenOptions} />
+                  <Stack.Screen name="Dashboard" component={DashboardScreen} options={tabStackScreenOptions} />
+                  <Stack.Screen name="Profile" component={ProfileScreen} options={tabStackScreenOptions} />
                   <Stack.Screen 
                     name="EventStats" 
                     component={EventStats}
@@ -124,14 +144,21 @@ const App = () => {
                       presentation: 'card',
                     }}
                   />
-                  <Stack.Screen 
-                    name="EventConfirmation" 
-                    component={EventConfirmationScreen}
-                    options={{
-                      headerShown: false,
-                    }}
+                  <Stack.Screen
+                    name="EditEvent"
+                    component={EditEventScreen}
+                    options={defaultStackScreenOptions}
                   />
-                  <Stack.Screen name="My Tickets" component={MyTicketsScreen} />
+                  <Stack.Screen
+                    name="EventConfirmation"
+                    component={EventConfirmationScreen}
+                    options={fadeStackScreenOptions}
+                  />
+                  <Stack.Screen
+                    name="My Tickets"
+                    component={MyTicketsScreen}
+                    options={{ headerTitle: t('screens.myTickets') }}
+                  />
                   <Stack.Screen 
                     name="EventDetails" 
                     component={EventDetailsScreen}
@@ -163,7 +190,7 @@ const App = () => {
                     component={AttendeesScreen}
                     options={{
                       headerShown: true,
-                      headerTitle: "Who's Going",
+                      headerTitle: t('screens.attendees'),
                       headerStyle: {
                         backgroundColor: theme.colors.surface,
                       },
@@ -175,7 +202,7 @@ const App = () => {
                     component={AttendeeProfileScreen}
                     options={{
                       headerShown: true,
-                      headerTitle: 'Profile',
+                      headerTitle: t('screens.attendeeProfile'),
                       headerStyle: {
                         backgroundColor: theme.colors.surface,
                       },
@@ -187,35 +214,29 @@ const App = () => {
                     component={OrganizerProfileScreen}
                     options={{
                       headerShown: true,
-                      headerTitle: 'Organizer Profile',
+                      headerTitle: t('screens.organizerProfile'),
                       headerStyle: {
                         backgroundColor: theme.colors.surface,
                       },
                       headerTintColor: theme.colors.text,
                     }}
                   />
-                  <Stack.Screen 
-                    name="EditProfile" 
+                  <Stack.Screen
+                    name="EditProfile"
                     component={EditProfileScreen}
-                    options={{
-                      headerShown: false,
-                      presentation: 'modal',
-                    }}
+                    options={modalStackScreenOptions}
                   />
-                  <Stack.Screen 
-                    name="EditOrganization" 
+                  <Stack.Screen
+                    name="EditOrganization"
                     component={EditOrganizationScreen}
-                    options={{
-                      headerShown: false,
-                      presentation: 'modal',
-                    }}
+                    options={modalStackScreenOptions}
                   />
                   <Stack.Screen 
                     name="Settings" 
                     component={SettingsScreen}
                     options={{
                       headerShown: true,
-                      headerTitle: 'Settings',
+                      headerTitle: t('settings.title'),
                       headerStyle: {
                         backgroundColor: theme.colors.surface,
                       },
@@ -227,7 +248,7 @@ const App = () => {
                     component={PaymentMethodsScreen}
                     options={{
                       headerShown: true,
-                      headerTitle: 'Payment Methods',
+                      headerTitle: t('screens.paymentMethods'),
                       headerStyle: {
                         backgroundColor: theme.colors.surface,
                       },
@@ -239,7 +260,7 @@ const App = () => {
                     component={AddPaymentMethodScreen}
                     options={{
                       headerShown: true,
-                      headerTitle: 'Add Payment Method',
+                      headerTitle: t('screens.addPaymentMethod'),
                       headerStyle: {
                         backgroundColor: theme.colors.surface,
                       },
@@ -251,19 +272,17 @@ const App = () => {
                     component={CheckoutScreen}
                     options={{
                       headerShown: true,
-                      headerTitle: 'Checkout',
+                      headerTitle: t('screens.checkout'),
                       headerStyle: {
                         backgroundColor: theme.colors.surface,
                       },
                       headerTintColor: theme.colors.text,
                     }}
                   />
-                  <Stack.Screen 
-                    name="TicketConfirmation" 
+                  <Stack.Screen
+                    name="TicketConfirmation"
                     component={TicketConfirmationScreen}
-                    options={{
-                      headerShown: false,
-                    }}
+                    options={fadeStackScreenOptions}
                   />
                   <Stack.Screen 
                     name="PastEventDetails" 
@@ -276,21 +295,15 @@ const App = () => {
                       headerTintColor: theme.colors.text,
                     }}
                   />
-                  <Stack.Screen 
-                    name="Register" 
+                  <Stack.Screen
+                    name="Register"
                     component={RegisterScreen}
-                    options={{
-                      headerShown: false,
-                      presentation: 'modal',
-                    }}
+                    options={modalStackScreenOptions}
                   />
-                  <Stack.Screen 
-                    name="BecomeProvider" 
+                  <Stack.Screen
+                    name="BecomeProvider"
                     component={BecomeProviderScreen}
-                    options={{
-                      headerShown: false,
-                      presentation: 'modal',
-                    }}
+                    options={modalStackScreenOptions}
                   />
                   <Stack.Screen 
                     name="ProviderDashboard" 
@@ -299,13 +312,36 @@ const App = () => {
                       headerShown: false,
                     }}
                   />
-                </Stack.Navigator>
-              </NavigationContainer>
-            </SafeAreaProvider>
-          </PaperProvider>
-        </ThemeProvider>
-      </EventsProvider>
-    </AuthProvider>
+      </Stack.Navigator>
+    </AuthGate>
+  );
+};
+
+const App = () => {
+  const fontConfig = {
+    ...configureFonts({ config: fonts }),
+  };
+
+  return (
+    <LanguageProvider>
+      <AuthProvider>
+        <EventsProvider>
+          <ThemeProvider theme={theme}>
+            <PaperProvider
+              theme={{
+                ...paperTheme,
+                fonts: fontConfig,
+              }}
+            >
+              <StatusBar style="light" />
+              <SafeAreaProvider>
+                <AppNavigator />
+              </SafeAreaProvider>
+            </PaperProvider>
+          </ThemeProvider>
+        </EventsProvider>
+      </AuthProvider>
+    </LanguageProvider>
   );
 };
 

@@ -2,275 +2,159 @@ import React, { useState, useRef, useEffect } from 'react';
 import {
   StyleSheet,
   View,
-  ScrollView,
+  TextInput,
   TouchableOpacity,
   Image,
-  Dimensions,
   Platform,
   Animated,
   Alert,
   KeyboardAvoidingView,
-  TextInput
+  Keyboard,
+  ScrollView,
+  Pressable,
+  ActivityIndicator,
 } from 'react-native';
-import { Text, useTheme, Icon, Button, Input, CheckBox } from '@rneui/themed';
-import { SafeAreaView } from 'react-native-safe-area-context';
+import { Text, Icon } from '@rneui/themed';
+import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 import { LinearGradient } from 'expo-linear-gradient';
-import * as ImagePicker from 'expo-image-picker';
+import { pickImageFromLibrary, pickImageFromCamera } from '../utils/pickImage';
 import { useAuth } from '../context/AuthContext';
 import { useEvents } from '../context/EventsContext';
+import { useLanguage } from '../context/LanguageContext';
 
-const { width } = Dimensions.get('window');
+const TOTAL_STEPS = 7;
+
+const STEP_PROMPT_KEYS = {
+  1: 'becomeProvider.prompt.orgName',
+  2: 'becomeProvider.prompt.about',
+  3: 'becomeProvider.prompt.businessEmail',
+  4: 'becomeProvider.prompt.businessPhone',
+  5: 'becomeProvider.prompt.venueAddress',
+  6: 'becomeProvider.prompt.website',
+  7: 'becomeProvider.prompt.logo',
+};
+
+const SimpleStepDots = ({ current, total }) => (
+  <View style={styles.dotsRow}>
+    {Array.from({ length: total }, (_, i) => (
+      <View
+        key={i}
+        style={[styles.dot, i + 1 <= current ? styles.dotActive : styles.dotInactive]}
+      />
+    ))}
+  </View>
+);
 
 const BecomeProviderScreen = ({ navigation }) => {
-  const { theme } = useTheme();
   const { becomeProvider, user } = useAuth();
   const { updateEventsWithOrganizationNames } = useEvents();
-  
+  const { t } = useLanguage();
+  const insets = useSafeAreaInsets();
+
   const [currentStep, setCurrentStep] = useState(1);
+  const [keyboardVisible, setKeyboardVisible] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
-  
-  // Step 1: Party Information
-  const [partyLogo, setPartyLogo] = useState(null);
+
+  // Core fields
   const [organizationName, setOrganizationName] = useState('');
   const [description, setDescription] = useState('');
-  
-  // Step 2: Contact Information
-  const [partyEmail, setPartyEmail] = useState('');
+  const [partyEmail, setPartyEmail] = useState(user?.email || '');
   const [partyPhone, setPartyPhone] = useState('');
   const [website, setWebsite] = useState('');
+  const [partyLogo, setPartyLogo] = useState(null);
   const [businessAddress, setBusinessAddress] = useState({
-    street: '',
-    addressLine2: '',
-    city: '',
-    state: '',
-    zipCode: '',
-    country: 'United States'
+    street: '', city: '', state: '', zipCode: '', country: 'United States',
   });
-  
-  // Step 3: Tax Information
-  const [businessType, setBusinessType] = useState('individual');
-  const [taxId, setTaxId] = useState('');
-  const [taxIdType, setTaxIdType] = useState('ssn');
-  
-  // Step 4: Identity Verification
-  const [idFrontImage, setIdFrontImage] = useState(null);
-  const [idBackImage, setIdBackImage] = useState(null);
-  const [selfieImage, setSelfieImage] = useState(null);
-  const [idType, setIdType] = useState('driver_license');
-  
-  // Step 5: Bank Account Information
-  const [routingNumber, setRoutingNumber] = useState('');
-  const [accountNumber, setAccountNumber] = useState('');
-  const [confirmAccountNumber, setConfirmAccountNumber] = useState('');
-  const [accountHolderName, setAccountHolderName] = useState(user?.name || '');
-  const [accountType, setAccountType] = useState('checking');
-  
-  // Legal agreements
-  const [agreeToTerms, setAgreeToTerms] = useState(false);
-  const [agreeToStripeTerms, setAgreeToStripeTerms] = useState(false);
-  
-  // Animation refs
+
+  // Address autocomplete state (step 5 only)
+  const [addressSuggestions, setAddressSuggestions] = useState([]);
+  const [addressSearching, setAddressSearching] = useState(false);
+
   const fadeAnim = useRef(new Animated.Value(0)).current;
-  const slideAnim = useRef(new Animated.Value(30)).current;
+  const slideAnim = useRef(new Animated.Value(24)).current;
+  const scrollRef = useRef(null);
 
   useEffect(() => {
+    fadeAnim.setValue(0);
+    slideAnim.setValue(24);
     Animated.parallel([
-      Animated.timing(fadeAnim, {
-        toValue: 1,
-        duration: 600,
-        useNativeDriver: true,
-      }),
-      Animated.timing(slideAnim, {
-        toValue: 0,
-        duration: 600,
-        useNativeDriver: true,
-      }),
+      Animated.timing(fadeAnim, { toValue: 1, duration: 400, useNativeDriver: true }),
+      Animated.timing(slideAnim, { toValue: 0, duration: 400, useNativeDriver: true }),
     ]).start();
   }, [currentStep]);
 
-  const totalSteps = 5;
+  useEffect(() => {
+    const showEvent = Platform.OS === 'ios' ? 'keyboardWillShow' : 'keyboardDidShow';
+    const hideEvent = Platform.OS === 'ios' ? 'keyboardWillHide' : 'keyboardDidHide';
+    const showSub = Keyboard.addListener(showEvent, () => {
+      setKeyboardVisible(true);
+      setTimeout(() => scrollRef.current?.scrollToEnd({ animated: true }), 100);
+    });
+    const hideSub = Keyboard.addListener(hideEvent, () => setKeyboardVisible(false));
+    return () => { showSub.remove(); hideSub.remove(); };
+  }, []);
 
-  const pickPartyLogo = async () => {
-    try {
-      const { status } = await ImagePicker.requestMediaLibraryPermissionsAsync();
-      
-      if (status !== 'granted') {
-        Alert.alert('Permission Required', 'We need camera roll permissions to upload your party logo.');
-        return;
-      }
-
-      const result = await ImagePicker.launchImageLibraryAsync({
-        mediaTypes: ImagePicker.MediaTypeOptions.Images,
-        allowsEditing: true,
-        aspect: [1, 1],
-        quality: 0.8,
-      });
-
-      if (!result.canceled && result.assets[0]) {
-        setPartyLogo(result.assets[0].uri);
-      }
-    } catch (error) {
-      console.error('Error picking party logo:', error);
-      Alert.alert('Error', 'Something went wrong. Please try again.');
+  // ── Google Places address search ──────────────────────────────────────────
+  const searchAddress = async (text) => {
+    setBusinessAddress(p => ({ ...p, street: text }));
+    if (text.trim().length < 2) {
+      setAddressSuggestions([]);
+      return;
     }
-  };
-
-  const pickIdDocument = async (type) => {
+    setAddressSearching(true);
     try {
-      const { status } = await ImagePicker.requestCameraPermissionsAsync();
-      
-      if (status !== 'granted') {
-        Alert.alert('Permission Required', 'We need camera permissions to capture your ID document.');
-        return;
-      }
-
-      Alert.alert(
-        'Capture Document',
-        'Would you like to take a photo or select from gallery?',
-        [
-          { text: 'Camera', onPress: () => captureWithCamera(type) },
-          { text: 'Gallery', onPress: () => selectFromGallery(type) },
-          { text: 'Cancel', style: 'cancel' }
-        ]
+      const GOOGLE_KEY = process.env.EXPO_PUBLIC_GOOGLE_MAPS_API_KEY;
+      const response = await fetch(
+        `https://maps.googleapis.com/maps/api/place/autocomplete/json?input=${encodeURIComponent(text)}&types=address&language=en&key=${GOOGLE_KEY}`
       );
-    } catch (error) {
-      console.error('Error requesting camera permission:', error);
-      Alert.alert('Error', 'Unable to access camera.');
+      const data = await response.json();
+      setAddressSuggestions((data.predictions ?? []).map(item => ({
+        id: item.place_id,
+        display: item.description,
+        street: item.structured_formatting?.main_text || item.description.split(',')[0],
+        city: item.terms?.[1]?.value || '',
+        state: item.terms?.[2]?.value || '',
+        zipCode: '',
+      })));
+    } catch (e) {
+      setAddressSuggestions([]);
+    } finally {
+      setAddressSearching(false);
     }
   };
 
-  const captureWithCamera = async (type) => {
-    try {
-      const result = await ImagePicker.launchCameraAsync({
-        mediaTypes: ImagePicker.MediaTypeOptions.Images,
-        allowsEditing: true,
-        aspect: type === 'selfie' ? [1, 1] : [4, 3],
-        quality: 0.8,
-      });
-
-      if (!result.canceled && result.assets[0]) {
-        switch (type) {
-          case 'front':
-            setIdFrontImage(result.assets[0].uri);
-            break;
-          case 'back':
-            setIdBackImage(result.assets[0].uri);
-            break;
-          case 'selfie':
-            setSelfieImage(result.assets[0].uri);
-            break;
-        }
-      }
-    } catch (error) {
-      console.error('Error capturing with camera:', error);
-      Alert.alert('Error', 'Unable to capture photo.');
-    }
+  const selectAddress = (suggestion) => {
+    setBusinessAddress({
+      street: suggestion.display,
+      city: suggestion.city,
+      state: suggestion.state,
+      zipCode: suggestion.zipCode,
+      country: 'United States',
+    });
+    setAddressSuggestions([]);
+    Keyboard.dismiss();
   };
 
-  const selectFromGallery = async (type) => {
-    try {
-      const result = await ImagePicker.launchImageLibraryAsync({
-        mediaTypes: ImagePicker.MediaTypeOptions.Images,
-        allowsEditing: true,
-        aspect: type === 'selfie' ? [1, 1] : [4, 3],
-        quality: 0.8,
-      });
-
-      if (!result.canceled && result.assets[0]) {
-        switch (type) {
-          case 'front':
-            setIdFrontImage(result.assets[0].uri);
-            break;
-          case 'back':
-            setIdBackImage(result.assets[0].uri);
-            break;
-          case 'selfie':
-            setSelfieImage(result.assets[0].uri);
-            break;
-        }
-      }
-    } catch (error) {
-      console.error('Error selecting from gallery:', error);
-      Alert.alert('Error', 'Unable to select photo.');
-    }
-  };
-
-  const validateStep = () => {
+  // ── Navigation ────────────────────────────────────────────────────────────
+  const validateCurrentStep = () => {
     switch (currentStep) {
       case 1:
-        if (!organizationName.trim()) {
-          Alert.alert('Required Field', 'Organization name is required.');
-          return false;
-        }
-        if (!description.trim()) {
-          Alert.alert('Required Field', 'Party description is required.');
-          return false;
-        }
+        if (!organizationName.trim()) { Alert.alert(t('common.required.title'), t('becomeProvider.error.orgName')); return false; }
         return true;
       case 2:
-        if (!partyEmail.trim()) {
-          Alert.alert('Required Field', 'Party email is required.');
-          return false;
-        }
-        if (!partyPhone.trim()) {
-          Alert.alert('Required Field', 'Party phone is required.');
-          return false;
-        }
-        if (!businessAddress.street.trim() || !businessAddress.city.trim() || 
-            !businessAddress.state.trim() || !businessAddress.zipCode.trim()) {
-          Alert.alert('Required Fields', 'Complete business address is required.');
-          return false;
-        }
+        if (!description.trim()) { Alert.alert(t('common.required.title'), t('becomeProvider.error.description')); return false; }
         return true;
       case 3:
-        if (!taxId.trim()) {
-          Alert.alert('Required Field', `${taxIdType === 'ssn' ? 'Social Security Number' : 'Employer Identification Number'} is required.`);
-          return false;
-        }
-        if (taxIdType === 'ssn' && taxId.replace(/\D/g, '').length !== 9) {
-          Alert.alert('Invalid SSN', 'Please enter a valid 9-digit Social Security Number.');
-          return false;
-        }
-        if (taxIdType === 'ein' && taxId.replace(/\D/g, '').length !== 9) {
-          Alert.alert('Invalid EIN', 'Please enter a valid 9-digit Employer Identification Number.');
-          return false;
-        }
+        if (!partyEmail.trim()) { Alert.alert(t('common.required.title'), t('becomeProvider.error.businessEmail')); return false; }
         return true;
       case 4:
-        if (!idFrontImage) {
-          Alert.alert('Required Document', 'Please capture the front of your ID document.');
-          return false;
-        }
-        if (idType === 'driver_license' && !idBackImage) {
-          Alert.alert('Required Document', 'Please capture the back of your driver\'s license.');
-          return false;
-        }
-        if (!selfieImage) {
-          Alert.alert('Required Photo', 'Please take a selfie for identity verification.');
-          return false;
-        }
+        if (!partyPhone.trim()) { Alert.alert(t('common.required.title'), t('becomeProvider.error.businessPhone')); return false; }
         return true;
       case 5:
-        if (!routingNumber.trim() || routingNumber.length !== 9) {
-          Alert.alert('Required Field', 'Please enter a valid 9-digit routing number.');
-          return false;
-        }
-        if (!accountNumber.trim()) {
-          Alert.alert('Required Field', 'Account number is required.');
-          return false;
-        }
-        if (accountNumber !== confirmAccountNumber) {
-          Alert.alert('Account Numbers Don\'t Match', 'Please ensure both account numbers match.');
-          return false;
-        }
-        if (!accountHolderName.trim()) {
-          Alert.alert('Required Field', 'Account holder name is required.');
-          return false;
-        }
-        if (!agreeToTerms || !agreeToStripeTerms) {
-          Alert.alert('Agreement Required', 'Please agree to the terms of service and Stripe Connect terms.');
-          return false;
-        }
+        if (!businessAddress.street.trim()) { Alert.alert(t('common.required.title'), t('becomeProvider.error.address')); return false; }
+        return true;
+      case 6: // website — optional
+      case 7: // logo — optional
         return true;
       default:
         return true;
@@ -278,24 +162,19 @@ const BecomeProviderScreen = ({ navigation }) => {
   };
 
   const handleNext = () => {
-    if (validateStep()) {
-      if (currentStep < totalSteps) {
-        setCurrentStep(currentStep + 1);
-      } else {
-        handleSubmit();
-      }
-    }
+    if (!validateCurrentStep()) return;
+    if (currentStep < TOTAL_STEPS) setCurrentStep(s => s + 1);
+    else handleSubmit();
   };
 
-  const handlePrevious = () => {
-    if (currentStep > 1) {
-      setCurrentStep(currentStep - 1);
-    }
+  const handleBack = () => {
+    if (currentStep > 1) setCurrentStep(s => s - 1);
+    else navigation.goBack();
   };
 
+  // ── Submit ─────────────────────────────────────────────────────────────────
   const handleSubmit = async () => {
     setIsLoading(true);
-    
     try {
       const providerData = {
         organizationName,
@@ -303,647 +182,237 @@ const BecomeProviderScreen = ({ navigation }) => {
         partyEmail,
         partyPhone,
         website,
-        businessAddress,
+        businessAddress: { ...businessAddress, addressLine2: '' },
         partyLogo,
-        taxInfo: {
-          businessType,
-          taxId,
-          taxIdType,
-        },
-        bankAccountInfo: {
-          routingNumber,
-          accountNumber,
-          accountHolderName,
-          accountType,
-        },
-        identityVerification: {
-          idType,
-          idFrontImage,
-          idBackImage,
-          selfieImage,
-          submittedAt: new Date(),
-        },
       };
-
       const result = await becomeProvider(providerData);
-      
       if (result.success) {
-        // Update existing events with the new organization name
         await updateEventsWithOrganizationNames(providerData, user?.id);
-        
         Alert.alert(
-          'Application Submitted!', 
-          'Your provider application has been submitted! We\'ll verify your information and identity documents, then set up your payment account. You\'ll be notified when the process is complete.',
-          [{ text: 'OK', onPress: () => navigation.goBack() }]
+          t('becomeProvider.alert.submitted.title'),
+          t('becomeProvider.alert.submitted.message'),
+          [{ text: t('common.ok'), onPress: () => navigation.goBack() }]
         );
       } else {
-        Alert.alert('Error', result.message || 'Failed to submit application. Please try again.');
+        Alert.alert(t('common.error'), result.message || t('becomeProvider.error.submitFailed'));
       }
-    } catch (error) {
-      console.error('Provider application error:', error);
-      Alert.alert('Error', 'Something went wrong. Please try again.');
+    } catch {
+      Alert.alert(t('common.error'), t('common.errorGeneric'));
     } finally {
       setIsLoading(false);
     }
   };
 
-  const renderStepIndicator = () => (
-    <View style={styles.stepIndicator}>
-      {Array.from({ length: totalSteps }, (_, index) => (
-        <View key={index} style={styles.stepIndicatorContainer}>
-          <View
-            style={[
-              styles.stepCircle,
-              {
-                backgroundColor: index + 1 <= currentStep ? '#FFFFFF' : 'rgba(255,255,255,0.3)',
-              },
-            ]}
-          >
-            {index + 1 < currentStep ? (
-              <Icon name="check" type="feather" size={16} color="#333333" />
-            ) : (
-              <Text
-                style={[
-                  styles.stepNumber,
-                  { color: index + 1 <= currentStep ? '#333333' : '#FFFFFF' },
-                ]}
-              >
-                {index + 1}
-              </Text>
-            )}
-          </View>
-          {index < totalSteps - 1 && (
-            <View
-              style={[
-                styles.stepLine,
-                { backgroundColor: index + 1 < currentStep ? '#FFFFFF' : 'rgba(255,255,255,0.3)' },
-              ]}
-            />
-          )}
-        </View>
-      ))}
+  // ── UI helpers ────────────────────────────────────────────────────────────
+  const renderInput = (props) => (
+    <View style={styles.inputContainer}>
+      <TextInput
+        style={styles.input}
+        placeholderTextColor="rgba(255,255,255,0.5)"
+        selectionColor="#FF4B8C"
+        {...props}
+      />
     </View>
   );
 
-  const renderStep1 = () => (
-    <Animated.View
-      style={[
-        styles.stepContainer,
-        {
-          opacity: fadeAnim,
-          transform: [{ translateY: slideAnim }],
-        },
-      ]}
-    >
-      <View style={styles.stepHeader}>
-        <Text style={styles.stepTitle}>Party Information</Text>
-        <Text style={styles.stepSubtitle}>Tell us about your party organization</Text>
-      </View>
+  const pickPartyLogo = async () => {
+    const uri = await pickImageFromLibrary();
+    if (uri) setPartyLogo(uri);
+  };
 
-      <View style={styles.logoContainer}>
-        <TouchableOpacity style={styles.logoUpload} onPress={pickPartyLogo}>
-          {partyLogo ? (
-            <Image source={{ uri: partyLogo }} style={styles.logoImage} />
-          ) : (
-            <View style={styles.logoPlaceholder}>
-              <Icon name="image" type="feather" size={40} color="rgba(255,255,255,0.5)" />
-              <Text style={styles.logoPlaceholderText}>Party Logo</Text>
-            </View>
-          )}
-        </TouchableOpacity>
-      </View>
-
-      <Input
-        label="Organization Name *"
-        value={organizationName}
-        onChangeText={setOrganizationName}
-        placeholder="Your Party Organization Name"
-        inputStyle={styles.inputText}
-        labelStyle={styles.inputLabel}
-        containerStyle={styles.inputContainer}
-        leftIcon={<Icon name="briefcase" type="feather" size={20} color="#FFFFFF" />}
-      />
-
-      <View style={styles.textAreaContainer}>
-        <Text style={styles.inputLabel}>Party Description *</Text>
-        <TextInput
-          value={description}
-          onChangeText={setDescription}
-          placeholder="Describe your party organization and the types of events you plan to host..."
-          multiline
-          numberOfLines={4}
-          style={styles.textArea}
-          placeholderTextColor="rgba(255,255,255,0.5)"
-          maxLength={500}
-        />
-        <Text style={styles.characterCount}>{description.length}/500</Text>
-      </View>
-    </Animated.View>
+  const renderPhotoCircle = (uri, onPress) => (
+    <TouchableOpacity style={styles.photoButton} onPress={onPress}>
+      {uri ? (
+        <Image source={{ uri }} style={styles.photo} />
+      ) : (
+        <Icon name="image" type="feather" size={40} color="rgba(255,255,255,0.4)" />
+      )}
+    </TouchableOpacity>
   );
 
-  const renderStep2 = () => (
-    <Animated.View
-      style={[
-        styles.stepContainer,
-        {
-          opacity: fadeAnim,
-          transform: [{ translateY: slideAnim }],
-        },
-      ]}
-    >
-      <View style={styles.stepHeader}>
-        <Text style={styles.stepTitle}>Contact & Address</Text>
-        <Text style={styles.stepSubtitle}>Business contact information</Text>
-      </View>
-
-      <Input
-        label="Business Email *"
-        value={partyEmail}
-        onChangeText={setPartyEmail}
-        placeholder="business@organization.com"
-        keyboardType="email-address"
-        autoCapitalize="none"
-        inputStyle={styles.inputText}
-        labelStyle={styles.inputLabel}
-        containerStyle={styles.inputContainer}
-        leftIcon={<Icon name="mail" type="feather" size={20} color="#FFFFFF" />}
-      />
-
-      <Input
-        label="Business Phone *"
-        value={partyPhone}
-        onChangeText={setPartyPhone}
-        placeholder="(555) 123-4567"
-        keyboardType="phone-pad"
-        inputStyle={styles.inputText}
-        labelStyle={styles.inputLabel}
-        containerStyle={styles.inputContainer}
-        leftIcon={<Icon name="phone" type="feather" size={20} color="#FFFFFF" />}
-      />
-
-      <Input
-        label="Website (Optional)"
-        value={website}
-        onChangeText={setWebsite}
-        placeholder="https://yourwebsite.com"
-        keyboardType="url"
-        autoCapitalize="none"
-        inputStyle={styles.inputText}
-        labelStyle={styles.inputLabel}
-        containerStyle={styles.inputContainer}
-        leftIcon={<Icon name="globe" type="feather" size={20} color="#FFFFFF" />}
-      />
-
-      <Input
-        label="Business Address *"
-        value={businessAddress.street}
-        onChangeText={(text) => setBusinessAddress(prev => ({ ...prev, street: text }))}
-        placeholder="123 Main Street"
-        inputStyle={styles.inputText}
-        labelStyle={styles.inputLabel}
-        containerStyle={styles.inputContainer}
-        leftIcon={<Icon name="map-pin" type="feather" size={20} color="#FFFFFF" />}
-      />
-
-      <Input
-        label="Address Line 2 (Optional)"
-        value={businessAddress.addressLine2}
-        onChangeText={(text) => setBusinessAddress(prev => ({ ...prev, addressLine2: text }))}
-        placeholder="Suite, Apartment, etc."
-        inputStyle={styles.inputText}
-        labelStyle={styles.inputLabel}
-        containerStyle={styles.inputContainer}
-        leftIcon={<Icon name="home" type="feather" size={20} color="#FFFFFF" />}
-      />
-
-      <View style={styles.addressRow}>
-        <Input
-          label="City *"
-          value={businessAddress.city}
-          onChangeText={(text) => setBusinessAddress(prev => ({ ...prev, city: text }))}
-          placeholder="City"
-          inputStyle={styles.inputText}
-          labelStyle={styles.inputLabel}
-          containerStyle={[styles.inputContainer, styles.halfWidth]}
-        />
-        <Input
-          label="State *"
-          value={businessAddress.state}
-          onChangeText={(text) => setBusinessAddress(prev => ({ ...prev, state: text }))}
-          placeholder="State"
-          inputStyle={styles.inputText}
-          labelStyle={styles.inputLabel}
-          containerStyle={[styles.inputContainer, styles.halfWidth]}
-        />
-      </View>
-
-      <View style={styles.addressRow}>
-        <Input
-          label="ZIP Code *"
-          value={businessAddress.zipCode}
-          onChangeText={(text) => setBusinessAddress(prev => ({ ...prev, zipCode: text }))}
-          placeholder="12345"
-          keyboardType="numeric"
-          inputStyle={styles.inputText}
-          labelStyle={styles.inputLabel}
-          containerStyle={[styles.inputContainer, styles.halfWidth]}
-        />
-        <Input
-          label="Country *"
-          value={businessAddress.country}
-          onChangeText={(text) => setBusinessAddress(prev => ({ ...prev, country: text }))}
-          placeholder="Country"
-          inputStyle={styles.inputText}
-          labelStyle={styles.inputLabel}
-          containerStyle={[styles.inputContainer, styles.halfWidth]}
-        />
-      </View>
-    </Animated.View>
-  );
-
-  const renderStep3 = () => (
-    <Animated.View
-      style={[
-        styles.stepContainer,
-        {
-          opacity: fadeAnim,
-          transform: [{ translateY: slideAnim }],
-        },
-      ]}
-    >
-      <View style={styles.stepHeader}>
-        <Text style={styles.stepTitle}>Tax Information</Text>
-        <Text style={styles.stepSubtitle}>Required for payment processing</Text>
-      </View>
-
-      <View style={styles.radioContainer}>
-        <Text style={styles.inputLabel}>Business Type *</Text>
-        {[
-          { value: 'individual', label: 'Individual/Sole Proprietor' },
-          { value: 'company', label: 'Company/LLC' },
-          { value: 'non_profit', label: 'Non-Profit Organization' },
-        ].map((option) => (
-          <TouchableOpacity
-            key={option.value}
-            style={styles.radioOption}
-            onPress={() => setBusinessType(option.value)}
-          >
-            <Icon
-              name={businessType === option.value ? "radio-button-on" : "radio-button-off"}
-              type="ionicon"
-              size={20}
-              color="#FFFFFF"
-            />
-            <Text style={styles.radioLabel}>{option.label}</Text>
-          </TouchableOpacity>
-        ))}
-      </View>
-
-      <View style={styles.radioContainer}>
-        <Text style={styles.inputLabel}>Tax ID Type *</Text>
-        {[
-          { value: 'ssn', label: 'Social Security Number (SSN)' },
-          { value: 'ein', label: 'Employer Identification Number (EIN)' },
-        ].map((option) => (
-          <TouchableOpacity
-            key={option.value}
-            style={styles.radioOption}
-            onPress={() => setTaxIdType(option.value)}
-          >
-            <Icon
-              name={taxIdType === option.value ? "radio-button-on" : "radio-button-off"}
-              type="ionicon"
-              size={20}
-              color="#FFFFFF"
-            />
-            <Text style={styles.radioLabel}>{option.label}</Text>
-          </TouchableOpacity>
-        ))}
-      </View>
-
-      <Input
-        label={`${taxIdType === 'ssn' ? 'Social Security Number' : 'Employer Identification Number'} *`}
-        value={taxId}
-        onChangeText={setTaxId}
-        placeholder={taxIdType === 'ssn' ? 'XXX-XX-XXXX' : 'XX-XXXXXXX'}
-        keyboardType="numeric"
-        secureTextEntry={taxIdType === 'ssn'}
-        maxLength={taxIdType === 'ssn' ? 11 : 10}
-        inputStyle={styles.inputText}
-        labelStyle={styles.inputLabel}
-        containerStyle={styles.inputContainer}
-        leftIcon={<Icon name="shield" type="feather" size={20} color="#FFFFFF" />}
-      />
-
-      <View style={styles.infoBox}>
-        <Icon name="info" type="feather" size={16} color="rgba(255,255,255,0.7)" />
-        <Text style={styles.infoText}>
-          Your tax information is securely encrypted and used only for payment processing and tax reporting purposes.
-        </Text>
-      </View>
-    </Animated.View>
-  );
-
-  const renderStep4 = () => (
-    <Animated.View
-      style={[
-        styles.stepContainer,
-        {
-          opacity: fadeAnim,
-          transform: [{ translateY: slideAnim }],
-        },
-      ]}
-    >
-      <View style={styles.stepHeader}>
-        <Text style={styles.stepTitle}>Identity Verification</Text>
-        <Text style={styles.stepSubtitle}>Verify your identity to prevent fraud</Text>
-      </View>
-
-      <View style={styles.radioContainer}>
-        <Text style={styles.inputLabel}>ID Document Type *</Text>
-        {[
-          { value: 'driver_license', label: 'Driver\'s License' },
-          { value: 'passport', label: 'Passport' },
-          { value: 'state_id', label: 'State ID Card' },
-        ].map((option) => (
-          <TouchableOpacity
-            key={option.value}
-            style={styles.radioOption}
-            onPress={() => setIdType(option.value)}
-          >
-            <Icon
-              name={idType === option.value ? "radio-button-on" : "radio-button-off"}
-              type="ionicon"
-              size={20}
-              color="#FFFFFF"
-            />
-            <Text style={styles.radioLabel}>{option.label}</Text>
-          </TouchableOpacity>
-        ))}
-      </View>
-
-      <View style={styles.documentSection}>
-        <Text style={styles.documentSectionTitle}>Document Photos *</Text>
-        
-        <View style={styles.documentGrid}>
-          <TouchableOpacity 
-            style={styles.documentUpload} 
-            onPress={() => pickIdDocument('front')}
-          >
-            {idFrontImage ? (
-              <Image source={{ uri: idFrontImage }} style={styles.documentImage} />
-            ) : (
-              <View style={styles.documentPlaceholder}>
-                <Icon name="credit-card" type="feather" size={30} color="rgba(255,255,255,0.5)" />
-                <Text style={styles.documentPlaceholderText}>Front of ID</Text>
-              </View>
-            )}
-          </TouchableOpacity>
-
-          {idType === 'driver_license' && (
-            <TouchableOpacity 
-              style={styles.documentUpload} 
-              onPress={() => pickIdDocument('back')}
-            >
-              {idBackImage ? (
-                <Image source={{ uri: idBackImage }} style={styles.documentImage} />
-              ) : (
-                <View style={styles.documentPlaceholder}>
-                  <Icon name="credit-card" type="feather" size={30} color="rgba(255,255,255,0.5)" />
-                  <Text style={styles.documentPlaceholderText}>Back of License</Text>
-                </View>
-              )}
-            </TouchableOpacity>
-          )}
-        </View>
-      </View>
-
-      <View style={styles.documentSection}>
-        <Text style={styles.documentSectionTitle}>Selfie Verification *</Text>
-        
-        <TouchableOpacity 
-          style={styles.selfieUpload} 
-          onPress={() => pickIdDocument('selfie')}
-        >
-          {selfieImage ? (
-            <Image source={{ uri: selfieImage }} style={styles.selfieImage} />
-          ) : (
-            <View style={styles.selfiePlaceholder}>
-              <Icon name="user" type="feather" size={40} color="rgba(255,255,255,0.5)" />
-              <Text style={styles.selfiePlaceholderText}>Take Selfie</Text>
-            </View>
-          )}
-        </TouchableOpacity>
-      </View>
-
-      <View style={styles.infoBox}>
-        <Icon name="shield" type="feather" size={16} color="rgba(255,255,255,0.7)" />
-        <Text style={styles.infoText}>
-          Your identity documents are encrypted and used only for verification purposes. This helps prevent multiple accounts and ensures platform security.
-        </Text>
-      </View>
-    </Animated.View>
-  );
-
-  const renderStep5 = () => (
-    <Animated.View
-      style={[
-        styles.stepContainer,
-        {
-          opacity: fadeAnim,
-          transform: [{ translateY: slideAnim }],
-        },
-      ]}
-    >
-      <View style={styles.stepHeader}>
-        <Text style={styles.stepTitle}>Bank Account</Text>
-        <Text style={styles.stepSubtitle}>Where you'll receive payments</Text>
-      </View>
-
-      <Input
-        label="Account Holder Name *"
-        value={accountHolderName}
-        onChangeText={setAccountHolderName}
-        placeholder="Full name on account"
-        inputStyle={styles.inputText}
-        labelStyle={styles.inputLabel}
-        containerStyle={styles.inputContainer}
-        leftIcon={<Icon name="user" type="feather" size={20} color="#FFFFFF" />}
-      />
-
-      <Input
-        label="Routing Number *"
-        value={routingNumber}
-        onChangeText={setRoutingNumber}
-        placeholder="9-digit routing number"
-        keyboardType="numeric"
-        maxLength={9}
-        inputStyle={styles.inputText}
-        labelStyle={styles.inputLabel}
-        containerStyle={styles.inputContainer}
-        leftIcon={<Icon name="hash" type="feather" size={20} color="#FFFFFF" />}
-      />
-
-      <Input
-        label="Account Number *"
-        value={accountNumber}
-        onChangeText={setAccountNumber}
-        placeholder="Account number"
-        keyboardType="numeric"
-        secureTextEntry
-        inputStyle={styles.inputText}
-        labelStyle={styles.inputLabel}
-        containerStyle={styles.inputContainer}
-        leftIcon={<Icon name="credit-card" type="feather" size={20} color="#FFFFFF" />}
-      />
-
-      <Input
-        label="Confirm Account Number *"
-        value={confirmAccountNumber}
-        onChangeText={setConfirmAccountNumber}
-        placeholder="Re-enter account number"
-        keyboardType="numeric"
-        secureTextEntry
-        inputStyle={styles.inputText}
-        labelStyle={styles.inputLabel}
-        containerStyle={styles.inputContainer}
-        leftIcon={<Icon name="check-circle" type="feather" size={20} color="#FFFFFF" />}
-      />
-
-      <View style={styles.radioContainer}>
-        <Text style={styles.inputLabel}>Account Type *</Text>
-        {[
-          { value: 'checking', label: 'Checking' },
-          { value: 'savings', label: 'Savings' },
-        ].map((option) => (
-          <TouchableOpacity
-            key={option.value}
-            style={styles.radioOption}
-            onPress={() => setAccountType(option.value)}
-          >
-            <Icon
-              name={accountType === option.value ? "radio-button-on" : "radio-button-off"}
-              type="ionicon"
-              size={20}
-              color="#FFFFFF"
-            />
-            <Text style={styles.radioLabel}>{option.label}</Text>
-          </TouchableOpacity>
-        ))}
-      </View>
-
-      <View style={styles.agreementContainer}>
-        <CheckBox
-          checked={agreeToTerms}
-          onPress={() => setAgreeToTerms(!agreeToTerms)}
-          iconType="material-community"
-          checkedIcon="checkbox-marked"
-          uncheckedIcon="checkbox-blank-outline"
-          checkedColor="#FFFFFF"
-          uncheckedColor="rgba(255,255,255,0.5)"
-          containerStyle={styles.checkboxContainer}
-        />
-        <Text style={styles.agreementText}>
-          I agree to the <Text style={styles.linkText}>Terms of Service</Text> and <Text style={styles.linkText}>Privacy Policy</Text>
-        </Text>
-      </View>
-
-      <View style={styles.agreementContainer}>
-        <CheckBox
-          checked={agreeToStripeTerms}
-          onPress={() => setAgreeToStripeTerms(!agreeToStripeTerms)}
-          iconType="material-community"
-          checkedIcon="checkbox-marked"
-          uncheckedIcon="checkbox-blank-outline"
-          checkedColor="#FFFFFF"
-          uncheckedColor="rgba(255,255,255,0.5)"
-          containerStyle={styles.checkboxContainer}
-        />
-        <Text style={styles.agreementText}>
-          I agree to the <Text style={styles.linkText}>Stripe Connected Account Agreement</Text>
-        </Text>
-      </View>
-
-      <View style={styles.infoBox}>
-        <Icon name="lock" type="feather" size={16} color="rgba(255,255,255,0.7)" />
-        <Text style={styles.infoText}>
-          Your banking information is securely encrypted and processed by Stripe. We receive a 10% service fee, and you keep 90% of all ticket sales.
-        </Text>
-      </View>
-    </Animated.View>
-  );
-
-  const renderCurrentStep = () => {
+  const renderStepContent = () => {
     switch (currentStep) {
       case 1:
-        return renderStep1();
+        return renderInput({
+          placeholder: t('becomeProvider.placeholder.orgName'),
+          value: organizationName,
+          onChangeText: setOrganizationName,
+          autoCapitalize: 'words',
+          autoFocus: true,
+          onSubmitEditing: handleNext,
+        });
       case 2:
-        return renderStep2();
+        return (
+          <View style={styles.textAreaWrap}>
+            <TextInput
+              style={styles.textArea}
+              placeholder={t('becomeProvider.placeholder.about')}
+              placeholderTextColor="rgba(255,255,255,0.5)"
+              value={description}
+              onChangeText={setDescription}
+              multiline
+              maxLength={500}
+              autoFocus
+              selectionColor="#FF4B8C"
+            />
+            <Text style={styles.charCount}>{description.length}/500</Text>
+          </View>
+        );
       case 3:
-        return renderStep3();
+        return renderInput({
+          placeholder: t('becomeProvider.placeholder.businessEmail'),
+          value: partyEmail,
+          onChangeText: setPartyEmail,
+          keyboardType: 'email-address',
+          autoCapitalize: 'none',
+          autoFocus: true,
+          onSubmitEditing: handleNext,
+        });
       case 4:
-        return renderStep4();
+        return renderInput({
+          placeholder: t('becomeProvider.placeholder.businessPhone'),
+          value: partyPhone,
+          onChangeText: setPartyPhone,
+          keyboardType: 'phone-pad',
+          autoFocus: true,
+          onSubmitEditing: handleNext,
+        });
       case 5:
-        return renderStep5();
+        return (
+          <View style={styles.addressWrap}>
+            <View style={styles.inputContainer}>
+              <Icon name="map-pin" type="feather" size={16} color="rgba(255,255,255,0.4)" style={{ marginRight: 10 }} />
+              <TextInput
+                style={styles.input}
+                placeholder={t('becomeProvider.placeholder.address')}
+                placeholderTextColor="rgba(255,255,255,0.5)"
+                value={businessAddress.street}
+                onChangeText={searchAddress}
+                autoFocus
+                selectionColor="#FF4B8C"
+              />
+              {addressSearching
+                ? <ActivityIndicator size="small" color="#FF4B8C" style={{ marginRight: 4 }} />
+                : businessAddress.street.length > 0 && (
+                  <TouchableOpacity onPress={() => { setBusinessAddress(p => ({ ...p, street: '', city: '', state: '', zipCode: '' })); setAddressSuggestions([]); }} hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}>
+                    <Icon name="x" type="feather" size={16} color="rgba(255,255,255,0.4)" />
+                  </TouchableOpacity>
+                )
+              }
+            </View>
+
+            {addressSuggestions.length > 0 && (
+              <View style={styles.suggestionsList}>
+                {addressSuggestions.map(item => (
+                  <TouchableOpacity
+                    key={item.id}
+                    style={styles.suggestionItem}
+                    onPress={() => selectAddress(item)}
+                    activeOpacity={0.7}
+                  >
+                    <Icon name="map-pin" type="feather" size={14} color="#FF4B8C" style={{ marginRight: 10, flexShrink: 0 }} />
+                    <Text style={styles.suggestionText} numberOfLines={2}>{item.display}</Text>
+                  </TouchableOpacity>
+                ))}
+              </View>
+            )}
+
+            {/* Confirmed address pill */}
+            {businessAddress.city && !addressSuggestions.length && (
+              <View style={styles.confirmedPill}>
+                <Icon name="check-circle" type="feather" size={14} color="#4ade80" style={{ marginRight: 6 }} />
+                <Text style={styles.confirmedText} numberOfLines={1}>
+                  {[businessAddress.city, businessAddress.state, businessAddress.zipCode].filter(Boolean).join(', ')}
+                </Text>
+              </View>
+            )}
+          </View>
+        );
+      case 6:
+        return (
+          <View style={styles.photoStep}>
+            {renderInput({
+              placeholder: t('becomeProvider.placeholder.website'),
+              value: website,
+              onChangeText: setWebsite,
+              keyboardType: 'url',
+              autoCapitalize: 'none',
+              autoFocus: true,
+              onSubmitEditing: handleNext,
+            })}
+            <TouchableOpacity onPress={handleNext} style={styles.skipLink}>
+              <Text style={styles.skipText}>{t('common.skipForNow')}</Text>
+            </TouchableOpacity>
+          </View>
+        );
+      case 7:
+        return (
+          <View style={styles.photoStep}>
+            {renderPhotoCircle(partyLogo, pickPartyLogo)}
+            <TouchableOpacity onPress={handleNext} style={styles.skipLink}>
+              <Text style={styles.skipText}>{t('common.skipForNow')}</Text>
+            </TouchableOpacity>
+          </View>
+        );
       default:
-        return renderStep1();
+        return null;
     }
   };
 
   return (
-    <SafeAreaView style={[styles.container, { backgroundColor: theme.colors.background }]}>
-      <LinearGradient
-        colors={['rgba(50, 50, 50, 0.4)', 'rgba(0, 0, 0, 0)']}
-        style={styles.backgroundGradient}
-      />
-
-      {/* Header */}
-      <View style={styles.header}>
-        <TouchableOpacity
-          style={styles.backButton}
-          onPress={() => navigation.goBack()}
-        >
-          <Icon name="arrow-left" type="feather" size={24} color="#FFFFFF" />
-        </TouchableOpacity>
-        <Text style={styles.headerTitle}>Become a Provider</Text>
-        <Text style={styles.stepCounter}>{currentStep}/{totalSteps}</Text>
-      </View>
-
-      {renderStepIndicator()}
+    <SafeAreaView style={styles.container}>
+      <LinearGradient colors={['#0c162d', '#1a2a4a', '#0c162d']} style={styles.backgroundGradient} />
+      <View style={styles.overlay} />
 
       <KeyboardAvoidingView
-        style={styles.content}
-        behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
+        style={styles.keyboardView}
+        behavior={Platform.OS === 'ios' ? 'padding' : undefined}
+        keyboardVerticalOffset={Platform.OS === 'ios' ? insets.top : 0}
       >
+        <View style={styles.topBar}>
+          <TouchableOpacity style={styles.backButton} onPress={handleBack} hitSlop={{ top: 12, bottom: 12, left: 12, right: 12 }}>
+            <Icon name="arrow-left" type="feather" size={22} color="#FFFFFF" />
+          </TouchableOpacity>
+          <SimpleStepDots current={currentStep} total={TOTAL_STEPS} />
+          <Text style={styles.stepCount}>{t('becomeProvider.stepCount', { current: currentStep, total: TOTAL_STEPS })}</Text>
+        </View>
+
         <ScrollView
+          ref={scrollRef}
           style={styles.scrollView}
-          showsVerticalScrollIndicator={false}
+          contentContainerStyle={[
+            styles.scrollContent,
+            keyboardVisible && styles.scrollContentKeyboard,
+          ]}
           keyboardShouldPersistTaps="handled"
+          keyboardDismissMode="on-drag"
+          showsVerticalScrollIndicator={false}
+          bounces={false}
         >
-          {renderCurrentStep()}
+          <Pressable onPress={Keyboard.dismiss}>
+            <Animated.View
+              style={[
+                styles.main,
+                keyboardVisible && styles.mainKeyboardOpen,
+                { opacity: fadeAnim, transform: [{ translateY: slideAnim }] },
+              ]}
+            >
+              <Text style={[styles.brand, keyboardVisible && styles.brandCompact]}>{t('brand.name')}</Text>
+              <Text style={styles.prompt}>{t(STEP_PROMPT_KEYS[currentStep])}</Text>
+              <View style={styles.fieldWrap}>{renderStepContent()}</View>
+            </Animated.View>
+          </Pressable>
         </ScrollView>
 
-        {/* Navigation Buttons */}
-        <View style={styles.navigationContainer}>
-          {currentStep > 1 && (
-            <TouchableOpacity style={styles.previousButton} onPress={handlePrevious}>
-              <Text style={styles.previousButtonText}>Previous</Text>
-            </TouchableOpacity>
-          )}
-          
-          <TouchableOpacity
-            style={[styles.nextButton, { flex: currentStep === 1 ? 1 : 0.7 }]}
-            onPress={handleNext}
-            disabled={isLoading}
-          >
-            <LinearGradient
-              colors={['#FFFFFF', '#F0F0F0']}
-              style={styles.nextButtonGradient}
-            >
-              <Text style={styles.nextButtonText}>
-                {isLoading ? 'Submitting...' : currentStep === totalSteps ? 'Submit Application' : 'Continue'}
+        <View style={[styles.footer, { paddingBottom: Math.max(insets.bottom, 16) }]}>
+          <TouchableOpacity style={styles.actionButton} onPress={handleNext} disabled={isLoading}>
+            {isLoading ? (
+              <ActivityIndicator color="#0c162d" />
+            ) : (
+              <Text style={styles.actionButtonText}>
+                {currentStep === TOTAL_STEPS ? t('becomeProvider.button.submit') : t('common.continue')}
               </Text>
-            </LinearGradient>
+            )}
           </TouchableOpacity>
         </View>
       </KeyboardAvoidingView>
@@ -952,306 +421,147 @@ const BecomeProviderScreen = ({ navigation }) => {
 };
 
 const styles = StyleSheet.create({
-  container: {
-    flex: 1,
-  },
-  backgroundGradient: {
-    position: 'absolute',
-    left: 0,
-    right: 0,
-    top: 0,
-    height: 300,
-  },
-  header: {
+  container: { flex: 1 },
+  backgroundGradient: { position: 'absolute', top: 0, left: 0, bottom: 0, right: 0 },
+  overlay: { ...StyleSheet.absoluteFillObject, backgroundColor: 'rgba(0,0,0,0.85)' },
+  keyboardView: { flex: 1 },
+  scrollView: { flex: 1 },
+  scrollContent: { flexGrow: 1, justifyContent: 'center', paddingBottom: 16 },
+  scrollContentKeyboard: { justifyContent: 'flex-start', paddingTop: 4 },
+  topBar: {
     flexDirection: 'row',
     alignItems: 'center',
-    justifyContent: 'space-between',
     paddingHorizontal: 20,
-    paddingVertical: 16,
+    paddingTop: 8,
+    paddingBottom: 16,
   },
-  backButton: {
+  backButton: { width: 40, padding: 4 },
+  dotsRow: {
+    flex: 1,
+    flexDirection: 'row',
+    justifyContent: 'center',
+    alignItems: 'center',
+    gap: 6,
+  },
+  dot: { width: 7, height: 7, borderRadius: 4 },
+  dotActive: { backgroundColor: '#FFFFFF' },
+  dotInactive: { backgroundColor: 'rgba(255,255,255,0.2)' },
+  stepCount: {
     width: 44,
-    height: 44,
-    borderRadius: 22,
-    backgroundColor: 'rgba(255,255,255,0.1)',
-    justifyContent: 'center',
-    alignItems: 'center',
-  },
-  headerTitle: {
-    fontSize: 20,
-    fontWeight: '700',
-    color: '#FFFFFF',
-  },
-  stepCounter: {
-    fontSize: 16,
-    fontWeight: '600',
-    color: 'rgba(255,255,255,0.7)',
-  },
-  stepIndicator: {
-    flexDirection: 'row',
-    justifyContent: 'center',
-    alignItems: 'center',
-    paddingHorizontal: 20,
-    marginBottom: 30,
-  },
-  stepIndicatorContainer: {
-    flexDirection: 'row',
-    alignItems: 'center',
-  },
-  stepCircle: {
-    width: 32,
-    height: 32,
-    borderRadius: 16,
-    justifyContent: 'center',
-    alignItems: 'center',
-  },
-  stepNumber: {
-    fontSize: 14,
-    fontWeight: '600',
-  },
-  stepLine: {
-    width: 40,
-    height: 2,
-    marginHorizontal: 8,
-  },
-  content: {
-    flex: 1,
-  },
-  scrollView: {
-    flex: 1,
-    paddingHorizontal: 20,
-  },
-  stepContainer: {
-    flex: 1,
-  },
-  stepHeader: {
-    alignItems: 'center',
-    marginBottom: 30,
-  },
-  stepTitle: {
-    fontSize: 24,
-    fontWeight: '700',
-    color: '#FFFFFF',
-    marginBottom: 8,
-  },
-  stepSubtitle: {
-    fontSize: 16,
-    color: 'rgba(255,255,255,0.7)',
-    textAlign: 'center',
-  },
-  logoContainer: {
-    alignItems: 'center',
-    marginBottom: 30,
-  },
-  logoUpload: {
-    width: 120,
-    height: 120,
-    borderRadius: 60,
-    backgroundColor: 'rgba(255,255,255,0.1)',
-    justifyContent: 'center',
-    alignItems: 'center',
-    borderWidth: 2,
-    borderColor: 'rgba(255,255,255,0.2)',
-    borderStyle: 'dashed',
-  },
-  logoImage: {
-    width: 116,
-    height: 116,
-    borderRadius: 58,
-  },
-  logoPlaceholder: {
-    alignItems: 'center',
-  },
-  logoPlaceholderText: {
-    color: 'rgba(255,255,255,0.5)',
-    fontSize: 12,
-    marginTop: 8,
-    fontWeight: '500',
-  },
-  inputContainer: {
-    marginBottom: 20,
-  },
-  inputLabel: {
-    color: '#FFFFFF',
-    fontSize: 16,
-    fontWeight: '600',
-    marginBottom: 8,
-  },
-  inputText: {
-    color: '#FFFFFF',
-    fontSize: 16,
-  },
-  textAreaContainer: {
-    marginBottom: 20,
-  },
-  textArea: {
-    backgroundColor: 'rgba(255,255,255,0.1)',
-    borderRadius: 12,
-    padding: 16,
-    color: '#FFFFFF',
-    fontSize: 16,
-    textAlignVertical: 'top',
-    minHeight: 100,
-  },
-  characterCount: {
-    color: 'rgba(255,255,255,0.5)',
-    fontSize: 12,
     textAlign: 'right',
-    marginTop: 4,
+    fontSize: 11,
+    color: 'rgba(255,255,255,0.45)',
+    fontWeight: '500',
   },
-  addressRow: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
+  main: { paddingHorizontal: 24, paddingTop: 8, paddingBottom: 24 },
+  mainKeyboardOpen: { paddingTop: 0, paddingBottom: 8 },
+  brand: {
+    fontSize: 48,
+    fontWeight: '800',
+    color: '#FFFFFF',
+    letterSpacing: 2,
+    textAlign: 'center',
+    marginBottom: 48,
+    fontFamily: Platform.OS === 'ios' ? 'Helvetica Neue' : 'sans-serif-condensed',
   },
-  halfWidth: {
-    width: '48%',
-  },
-  radioContainer: {
+  brandCompact: { fontSize: 32, marginBottom: 16 },
+  prompt: {
+    fontSize: 22,
+    fontWeight: '700',
+    color: '#FFFFFF',
+    textAlign: 'center',
     marginBottom: 20,
   },
-  radioOption: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    paddingVertical: 8,
-  },
-  radioLabel: {
-    color: '#FFFFFF',
-    fontSize: 16,
-    marginLeft: 10,
-  },
-  documentSection: {
-    marginBottom: 24,
-  },
-  documentSectionTitle: {
-    color: '#FFFFFF',
-    fontSize: 16,
-    fontWeight: '600',
-    marginBottom: 12,
-  },
-  documentGrid: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    gap: 12,
-  },
-  documentUpload: {
-    flex: 1,
-    height: 120,
-    backgroundColor: 'rgba(255,255,255,0.1)',
-    borderRadius: 12,
-    justifyContent: 'center',
-    alignItems: 'center',
-    borderWidth: 2,
-    borderColor: 'rgba(255,255,255,0.2)',
-    borderStyle: 'dashed',
-  },
-  documentImage: {
+  fieldWrap: { width: '100%' },
+  inputContainer: {
     width: '100%',
-    height: '100%',
-    borderRadius: 10,
-  },
-  documentPlaceholder: {
-    alignItems: 'center',
-  },
-  documentPlaceholderText: {
-    color: 'rgba(255,255,255,0.5)',
-    fontSize: 12,
-    marginTop: 8,
-    fontWeight: '500',
-  },
-  selfieUpload: {
-    width: 120,
-    height: 120,
-    backgroundColor: 'rgba(255,255,255,0.1)',
-    borderRadius: 60,
-    justifyContent: 'center',
-    alignItems: 'center',
-    borderWidth: 2,
-    borderColor: 'rgba(255,255,255,0.2)',
-    borderStyle: 'dashed',
-    alignSelf: 'center',
-  },
-  selfieImage: {
-    width: 116,
-    height: 116,
-    borderRadius: 58,
-  },
-  selfiePlaceholder: {
-    alignItems: 'center',
-  },
-  selfiePlaceholderText: {
-    color: 'rgba(255,255,255,0.5)',
-    fontSize: 12,
-    marginTop: 8,
-    fontWeight: '500',
-  },
-  infoBox: {
+    backgroundColor: 'rgba(40,40,40,0.8)',
+    borderRadius: 12,
     flexDirection: 'row',
-    backgroundColor: 'rgba(255,255,255,0.1)',
+    alignItems: 'center',
+    height: 56,
+    paddingHorizontal: 16,
+    borderWidth: 2,
+    borderColor: 'rgba(255,255,255,0.1)',
+  },
+  input: { flex: 1, height: 56, color: '#FFFFFF', fontSize: 16 },
+  textAreaWrap: { width: '100%' },
+  textArea: {
+    width: '100%',
+    minHeight: 120,
+    backgroundColor: 'rgba(40,40,40,0.8)',
     borderRadius: 12,
     padding: 16,
-    marginBottom: 20,
-    alignItems: 'flex-start',
-  },
-  infoText: {
-    color: 'rgba(255,255,255,0.7)',
-    fontSize: 14,
-    marginLeft: 10,
-    flex: 1,
-    lineHeight: 20,
-  },
-  agreementContainer: {
-    flexDirection: 'row',
-    alignItems: 'flex-start',
-    marginBottom: 15,
-  },
-  checkboxContainer: {
-    backgroundColor: 'transparent',
-    borderWidth: 0,
-    padding: 0,
-    margin: 0,
-    marginRight: 10,
-  },
-  agreementText: {
-    color: 'rgba(255,255,255,0.8)',
-    fontSize: 14,
-    flex: 1,
-    lineHeight: 20,
-  },
-  linkText: {
-    color: '#FFFFFF',
-    textDecorationLine: 'underline',
-  },
-  navigationContainer: {
-    flexDirection: 'row',
-    paddingHorizontal: 20,
-    paddingVertical: 20,
-    gap: 12,
-  },
-  previousButton: {
-    flex: 0.3,
-    paddingVertical: 16,
-    borderRadius: 12,
-    backgroundColor: 'rgba(255,255,255,0.1)',
-    alignItems: 'center',
-  },
-  previousButtonText: {
     color: '#FFFFFF',
     fontSize: 16,
-    fontWeight: '600',
+    borderWidth: 2,
+    borderColor: 'rgba(255,255,255,0.1)',
+    textAlignVertical: 'top',
   },
-  nextButton: {
+  charCount: { color: 'rgba(255,255,255,0.45)', fontSize: 12, textAlign: 'right', marginTop: 8 },
+  // Address autocomplete
+  addressWrap: { width: '100%' },
+  confirmedPill: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginTop: 10,
+    backgroundColor: 'rgba(74,222,128,0.1)',
+    borderRadius: 10,
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+    borderWidth: 1,
+    borderColor: 'rgba(74,222,128,0.25)',
+  },
+  confirmedText: {
+    flex: 1,
+    color: '#4ade80',
+    fontSize: 13,
+    fontWeight: '500',
+  },
+  suggestionsList: {
+    marginTop: 6,
+    backgroundColor: 'rgba(30,30,30,0.95)',
     borderRadius: 12,
+    borderWidth: 1,
+    borderColor: 'rgba(255,255,255,0.1)',
     overflow: 'hidden',
   },
-  nextButtonGradient: {
-    paddingVertical: 16,
+  suggestionItem: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingHorizontal: 14,
+    paddingVertical: 12,
+    borderBottomWidth: 1,
+    borderBottomColor: 'rgba(255,255,255,0.06)',
+  },
+  suggestionText: { flex: 1, color: '#FFFFFF', fontSize: 13, lineHeight: 18 },
+  // Photo
+  photoStep: { alignItems: 'center', width: '100%' },
+  photoButton: {
+    width: 120,
+    height: 120,
+    borderRadius: 60,
+    backgroundColor: 'rgba(40,40,40,0.8)',
+    borderWidth: 2,
+    borderColor: 'rgba(255,255,255,0.1)',
+    justifyContent: 'center',
+    alignItems: 'center',
+    overflow: 'hidden',
+  },
+  photo: { width: 120, height: 120, borderRadius: 60 },
+  skipLink: { marginTop: 20, padding: 8 },
+  skipText: { color: 'rgba(255,255,255,0.45)', fontSize: 14 },
+  // Footer
+  footer: { paddingHorizontal: 24, paddingTop: 8 },
+  actionButton: {
+    width: '100%',
+    height: 56,
+    borderRadius: 12,
+    backgroundColor: '#FFFFFF',
+    justifyContent: 'center',
     alignItems: 'center',
   },
-  nextButtonText: {
-    color: '#333333',
-    fontSize: 16,
-    fontWeight: '700',
-  },
+  actionButtonText: { color: '#0c162d', fontSize: 18, fontWeight: '700' },
 });
 
-export default BecomeProviderScreen; 
+export default BecomeProviderScreen;
