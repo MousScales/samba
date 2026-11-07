@@ -23,10 +23,13 @@ import DateTimePicker from '@react-native-community/datetimepicker';
 import { Menu, TouchableRipple } from 'react-native-paper';
 import { LinearGradient } from 'expo-linear-gradient';
 import CustomNavBar from '../components/CustomNavBar';
+import SambaBackground from '../components/SambaBackground';
+import { samba } from '../theme/samba';
 import { StatusBar } from 'expo-status-bar';
 import { useAuth } from '../context/AuthContext';
 import { useEvents } from '../context/EventsContext';
 import { useLanguage } from '../context/LanguageContext';
+import { getGoogleMapsApiKey } from '../config/env';
 
 const EVENT_CATEGORIES = [
   { label: 'Music & Concerts', value: 'music', icon: 'music' },
@@ -620,7 +623,7 @@ const CreateEventScreen = ({ navigation, route, forcedMode = null }) => {
     if (text.trim().length < 2) { setAddrSuggestions([]); return; }
     setAddrLoading(true);
     try {
-      const GOOGLE_KEY = process.env.EXPO_PUBLIC_GOOGLE_MAPS_API_KEY;
+      const GOOGLE_KEY = getGoogleMapsApiKey();
       const res  = await fetch(
         `https://maps.googleapis.com/maps/api/place/autocomplete/json?input=${encodeURIComponent(text)}&types=address&language=en&key=${GOOGLE_KEY}`
       );
@@ -653,7 +656,7 @@ const CreateEventScreen = ({ navigation, route, forcedMode = null }) => {
 
     // Fetch full address components in background to split later
     try {
-      const GOOGLE_KEY = process.env.EXPO_PUBLIC_GOOGLE_MAPS_API_KEY;
+      const GOOGLE_KEY = getGoogleMapsApiKey();
       const res  = await fetch(
         `https://maps.googleapis.com/maps/api/place/details/json?place_id=${prediction.place_id}&fields=address_components&key=${GOOGLE_KEY}`
       );
@@ -709,7 +712,7 @@ const CreateEventScreen = ({ navigation, route, forcedMode = null }) => {
     const fullAddress = `${street.trim()}, ${city.trim()}, ${state.trim()} ${zipCode.trim()}`.trim();
     if (geocode && street.trim() && fullAddress !== lastGeocodedAddress.current) {
       try {
-        const GOOGLE_KEY = process.env.EXPO_PUBLIC_GOOGLE_MAPS_API_KEY;
+        const GOOGLE_KEY = getGoogleMapsApiKey();
         const geoRes = await fetch(
           `https://maps.googleapis.com/maps/api/geocode/json?address=${encodeURIComponent(fullAddress)}&key=${GOOGLE_KEY}`
         );
@@ -932,13 +935,8 @@ const CreateEventScreen = ({ navigation, route, forcedMode = null }) => {
     return (
     <View style={styles.container}>
       <StatusBar style="light" />
-      <LinearGradient
-        colors={['#1a1a1a', '#232323', '#2c2c2c', '#1f1f1f']}
-        style={styles.backgroundGradient}
-        start={{ x: 0, y: 0 }}
-        end={{ x: 0, y: 1 }}
-      />
-      
+      <SambaBackground />
+
       <SafeAreaView style={styles.safeArea}>
         <View style={styles.header}>
           <View style={styles.headerSide}>
@@ -1464,6 +1462,7 @@ const CreateEventScreen = ({ navigation, route, forcedMode = null }) => {
 const styles = StyleSheet.create({
   container: {
     flex: 1,
+    backgroundColor: samba.bgDeep,
   },
   backgroundGradient: {
     position: 'absolute',

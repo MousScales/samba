@@ -1,7 +1,20 @@
 import React, { createContext, useContext, useState, useEffect } from 'react';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { useAuth } from './AuthContext';
-import { fetchExploreEvents } from '../services/eventsService';
+import { fetchExploreEvents, fetchEventById } from '../services/eventsService';
+import {
+  syncEventForShare,
+  deleteSyncedEvent,
+  syncMyEventsToCloud,
+} from '../services/shareService';
+import {
+  createTicketShare,
+  claimTicketShare,
+  assignTicketHolder,
+  fetchHeldTicketsFromSupabase,
+  getOrderShareCompanions,
+} from '../services/ticketShareService';
+import { samba } from '../theme/samba';
 
 const EventsContext = createContext();
 
@@ -300,12 +313,12 @@ export const EventsProvider = ({ children }) => {
     loadOrganizerFollowers();
   }, []);
 
-  // Reload from Supabase when user logs in (fresh explore feed)
+  // Reload from Supabase when user logs in (fresh explore feed + cloud sync)
   useEffect(() => {
     if (user?.id) {
       loadEvents();
     }
-  }, [user?.id]);
+  }, [user?.id, user?.role]);
 
   // Load events, followed organizers, follower counts, and tickets from storage on app start
   useEffect(() => {
@@ -437,6 +450,10 @@ export const EventsProvider = ({ children }) => {
         console.log('📅 Loaded events from storage:', localEvents.length);
       } else {
         console.log('📅 No stored events found');
+      }
+
+      if (user?.role === 'provider' && user?.id) {
+        localEvents = await backfillAndSyncLocalEvents(localEvents);
       }
 
       const remoteEvents = await fetchExploreEvents();
@@ -663,11 +680,61 @@ export const EventsProvider = ({ children }) => {
     }
   };
 
+  const cloudSyncEvent = async (event) => {
+    if (user?.role !== 'provider' || !user?.id || !event) return;
+    await syncEventForShare(event, user.id);
+  };
+
+  const cloudDeleteEvent = async (eventId) => {
+    if (user?.role !== 'provider' || !user?.id || !eventId) return;
+    await deleteSyncedEvent(eventId);
+  };
+
+  const backfillAndSyncLocalEvents = async (localEvents) => {
+    if (user?.role !== 'provider' || !user?.id) return localEvents;
+
+    let backfillChanged = false;
+    const backfilled = localEvents.map((event) => {
+      if (String(event.id).startsWith('mock_')) return event;
+
+      const orgId = event.organizerId || event.organizer?.id;
+      if (orgId && orgId !== user.id) return event;
+      if (orgId === user.id) return event;
+
+      backfillChanged = true;
+      return {
+        ...event,
+        organizerId: user.id,
+        organizer: {
+          ...(typeof event.organizer === 'object' ? event.organizer : {}),
+          id: user.id,
+        },
+      };
+    });
+
+    if (backfillChanged) {
+      await saveEvents(backfilled);
+      console.log('☁️ Backfilled organizer_id on legacy local events');
+    }
+
+    await syncMyEventsToCloud(backfilled, user.id);
+    return backfilled;
+  };
+
   const addEvent = async (eventData) => {
     try {
+      const organizerId = user?.role === 'provider' && user?.id
+        ? user.id
+        : (eventData.organizerId || eventData.organizer?.id);
+
       const newEvent = {
         ...eventData,
         id: eventData.id || Date.now().toString() + Math.random().toString(36).substr(2, 9),
+        organizerId,
+        organizer: {
+          ...(typeof eventData.organizer === 'object' ? eventData.organizer : {}),
+          id: organizerId,
+        },
         createdAt: new Date(),
         updatedAt: new Date(),
         status: 'upcoming',
@@ -686,6 +753,7 @@ export const EventsProvider = ({ children }) => {
       const updatedEvents = [...events, newEvent];
       setEvents(updatedEvents);
       await saveEvents(updatedEvents);
+      await cloudSyncEvent(newEvent);
       return newEvent;
     } catch (error) {
       console.error('Error adding event:', error);
@@ -708,6 +776,7 @@ export const EventsProvider = ({ children }) => {
       });
 
       await saveEvents(nextEvents);
+      if (updatedEvent) await cloudSyncEvent(updatedEvent);
       return updatedEvent;
     } catch (error) {
       console.error('Error updating event:', error);
@@ -727,6 +796,7 @@ export const EventsProvider = ({ children }) => {
 
   const deleteEvent = async (eventId) => {
     try {
+      await cloudDeleteEvent(eventId);
       const updatedEvents = events.filter(event => event.id !== eventId);
       setEvents(updatedEvents);
       await saveEvents(updatedEvents);
@@ -1074,7 +1144,7 @@ export const EventsProvider = ({ children }) => {
         type: 'ticket_purchased',
         icon: 'shopping-bag',
         text: `${totalTicketsPurchased} ticket${totalTicketsPurchased > 1 ? 's' : ''} purchased by ${userInfo.name}`,
-        color: '#FFD700',
+        color: samba.green,
         purchaserName: userInfo.name,
         avatar: userInfo.profilePicture || null,
         ticketCount: totalTicketsPurchased,
@@ -1100,6 +1170,71 @@ export const EventsProvider = ({ children }) => {
       console.error('Error purchasing tickets:', error);
       throw error;
     }
+  };
+
+  const saveTicketsFromPurchase = async (event, purchaseResult, buyer) => {
+    const eventDateTime = toValidDate(event.date) || new Date();
+    const startTime = toValidDate(event.startTime);
+    if (startTime) {
+      eventDateTime.setHours(
+        startTime.getHours(),
+        startTime.getMinutes(),
+        startTime.getSeconds(),
+      );
+    }
+
+    const newTickets = (purchaseResult.tickets || []).map((t) => ({
+      id: t.id,
+      ticketNumber: purchaseResult.ticketNumber,
+      eventId: event.id,
+      eventTitle: event.title,
+      eventDate: eventDateTime,
+      eventTime: event.startTime,
+      eventLocation: event.address?.formatted || event.venue,
+      eventImage: event.coverImage || event.flyers?.[0],
+      ticketType: t.ticketType,
+      price: t.price || 0,
+      isFree: t.isFree || false,
+      purchaseDate: new Date(),
+      buyerName: buyer.name,
+      buyerEmail: buyer.email,
+      buyerAvatar: buyer.profilePicture || null,
+      status: 'upcoming',
+      qrCode: t.qrCode,
+      organizer: event.organizer,
+      orderId: purchaseResult.orderId,
+      source: 'supabase',
+    }));
+
+    const updatedTickets = [...userTickets, ...newTickets];
+    setUserTickets(updatedTickets);
+    await saveUserTickets(updatedTickets);
+
+    if (user?.id) {
+      await Promise.all(
+        newTickets.map((t) => assignTicketHolder(t.id, user.id)),
+      );
+      const withHolder = updatedTickets.map((t) =>
+        newTickets.some((n) => n.id === t.id)
+          ? { ...t, holderUserId: user.id }
+          : t,
+      );
+      setUserTickets(withHolder);
+      await saveUserTickets(withHolder);
+    }
+
+    const remoteEvent = await fetchEventById(event.id);
+    if (remoteEvent) {
+      const updatedEvents = events.map((e) => (
+        e.id === event.id
+          ? { ...e, ...remoteEvent, scannedTickets: e.scannedTickets, actualAttendees: e.actualAttendees }
+          : e
+      ));
+      setEvents(updatedEvents);
+      await saveEvents(updatedEvents);
+    }
+
+    return newTickets;
   };
 
   // Auto-update ticket statuses based on event times
@@ -1154,9 +1289,112 @@ export const EventsProvider = ({ children }) => {
     return updatedTickets;
   };
 
+  const syncUserTicketsFromSupabase = async () => {
+    if (!user?.id) return userTickets;
+
+    const heldFromServer = await fetchHeldTicketsFromSupabase(user.id);
+    const heldIdSet = new Set(heldFromServer.map((t) => t.id));
+    const merged = [];
+    const seen = new Set();
+
+    userTickets.forEach((t) => {
+      if (t.source !== 'supabase') {
+        merged.push(t);
+        seen.add(t.id);
+      }
+    });
+
+    heldFromServer.forEach((serverTicket) => {
+      const local = userTickets.find((t) => t.id === serverTicket.id);
+      merged.push(
+        local
+          ? { ...local, ...serverTicket, holderUserId: user.id }
+          : { ...serverTicket, holderUserId: user.id },
+      );
+      seen.add(serverTicket.id);
+    });
+
+    userTickets.forEach((t) => {
+      if (
+        t.source === 'supabase'
+        && !seen.has(t.id)
+        && t.buyerEmail?.toLowerCase() === user.email?.toLowerCase()
+      ) {
+        merged.push({ ...t, holderUserId: t.holderUserId || user.id });
+        seen.add(t.id);
+      }
+    });
+
+    const changed = merged.length !== userTickets.length
+      || merged.some((t, i) => t.id !== userTickets[i]?.id);
+
+    if (changed) {
+      setUserTickets(merged);
+      await saveUserTickets(merged);
+    }
+
+    return merged;
+  };
+
+  const shareTicket = async (ticketId) => {
+    return createTicketShare(ticketId);
+  };
+
+  const claimSharedTicket = async (shareToken) => {
+    const result = await claimTicketShare(shareToken);
+    const { ticket, event } = result;
+
+    const eventDateTime = toValidDate(event?.date) || new Date();
+    const startTime = toValidDate(event?.startTime);
+    if (startTime) {
+      eventDateTime.setHours(
+        startTime.getHours(),
+        startTime.getMinutes(),
+        startTime.getSeconds(),
+      );
+    }
+
+    const newTicket = {
+      id: ticket.id,
+      ticketNumber: ticket.ticketNumber,
+      orderId: ticket.orderId,
+      eventId: event.id,
+      eventTitle: event.title || 'Event',
+      eventDate: eventDateTime,
+      eventTime: event.startTime,
+      eventLocation: event.venue,
+      eventImage: event.coverImage,
+      ticketType: ticket.ticketType,
+      price: Number(ticket.price) || 0,
+      isFree: ticket.isFree,
+      buyerName: ticket.buyerName,
+      buyerEmail: ticket.buyerEmail,
+      status: ticket.status,
+      qrCode: ticket.qrCode,
+      source: 'supabase',
+      holderUserId: user?.id,
+      isSharedTicket: true,
+      sharedFromUserId: result.share?.sharerUserId,
+      purchaseDate: new Date(),
+    };
+
+    const withoutDup = userTickets.filter((t) => t.id !== newTicket.id);
+    const updated = [...withoutDup, newTicket];
+    setUserTickets(updated);
+    await saveUserTickets(updated);
+    return newTicket;
+  };
+
+  const getTicketsByOrderId = (orderId) => {
+    if (!orderId) return [];
+    return userTickets.filter((t) => t.orderId === orderId);
+  };
+
   const getUserTickets = async (filterType = 'all') => {
     const now = new Date();
-    
+
+    await syncUserTicketsFromSupabase();
+
     // Auto-update ticket statuses first
     const currentTickets = await updateTicketStatuses();
     
@@ -1623,7 +1861,13 @@ export const EventsProvider = ({ children }) => {
     organizerFollowers,
     updateEventTicketSales,
     purchaseTickets,
+    saveTicketsFromPurchase,
     getUserTickets,
+    syncUserTicketsFromSupabase,
+    shareTicket,
+    claimSharedTicket,
+    getTicketsByOrderId,
+    getOrderShareCompanions,
     updateTicketStatuses,
     getTicketById,
     scanTicket,

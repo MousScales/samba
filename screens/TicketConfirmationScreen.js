@@ -17,11 +17,19 @@ const NOTCH_R   = 18;
 const TicketConfirmationScreen = ({ navigation, route }) => {
   const insets = useSafeAreaInsets();
   const { t, locale } = useLanguage();
-  const { event, tickets, totalAmount, email, paymentId } = route.params;
+  const {
+    event, tickets, totalAmount, email, paymentId,
+    orderId, ticketNumber, purchasedTickets = [], isGuest,
+  } = route.params;
   const safeTotal  = typeof totalAmount === 'number' ? totalAmount : parseFloat(totalAmount) || 0;
-  const confirmId  = (paymentId || `SAMBA-${Date.now()}`).toUpperCase().slice(-8);
+  const confirmId  = (orderId || ticketNumber || paymentId || `SAMBA-${Date.now()}`).toString().slice(-8).toUpperCase();
   const coverImage = event.coverImage || event.image || event.flyers?.[0];
   const ticketEntries = Object.entries(tickets || {}).filter(([, count]) => count > 0);
+  const qrTickets = purchasedTickets.length > 0
+    ? purchasedTickets
+    : ticketEntries.flatMap(([type, count]) =>
+        Array.from({ length: count }, (_, i) => ({ ticketType: type, qrCode: `SAMBA:${event.id}:${confirmId}:${i}` }))
+      );
 
   const formatDate = (d) => {
     if (!d) return t('common.tba');
@@ -43,10 +51,9 @@ const TicketConfirmationScreen = ({ navigation, route }) => {
 
   useLayoutEffect(() => { navigation.setOptions({ headerShown: false }); }, [navigation]);
 
-  const goHome      = () => navigation.dispatch(CommonActions.reset({ index: 0, routes: [{ name: 'Home' }] }));
+  const goHome = () => navigation.dispatch(CommonActions.reset({ index: 0, routes: [{ name: 'Home' }] }));
   const goMyTickets = () => navigation.dispatch(CommonActions.reset({ index: 0, routes: [{ name: 'Profile' }] }));
-
-  const qrValue = `SAMBA:${event.id || 'EVT'}:${confirmId}`;
+  const goLookup = () => navigation.navigate('TicketLookup', { email, orderId });
 
   return (
     <View style={styles.container}>
@@ -63,8 +70,15 @@ const TicketConfirmationScreen = ({ navigation, route }) => {
           </View>
           <Text style={styles.successTitle}>{t('ticketConfirmation.success.title')}</Text>
           <Text style={styles.successSub}>
-            {t('ticketConfirmation.success.subtitle', { email })}
+            {isGuest
+              ? t('ticketConfirmation.success.guestSubtitle', { email })
+              : t('ticketConfirmation.success.subtitle', { email })}
           </Text>
+          {isGuest && orderId ? (
+            <Text style={styles.orderIdText}>
+              {t('ticketConfirmation.orderId', { orderId })}
+            </Text>
+          ) : null}
         </View>
 
         {/* ══════════════════════════════════════
@@ -132,14 +146,21 @@ const TicketConfirmationScreen = ({ navigation, route }) => {
             )}
 
             <View style={styles.qrSection}>
-              <View style={styles.qrWrap}>
-                <QRCode
-                  value={qrValue}
-                  size={120}
-                  backgroundColor="transparent"
-                  color="#FFFFFF"
-                />
-              </View>
+              {qrTickets.map((ticket, index) => (
+                <View key={ticket.id || index} style={styles.qrTicketBlock}>
+                  {qrTickets.length > 1 ? (
+                    <Text style={styles.qrTicketLabel}>{ticket.ticketType}</Text>
+                  ) : null}
+                  <View style={styles.qrWrap}>
+                    <QRCode
+                      value={ticket.qrCode || ticket.id}
+                      size={120}
+                      backgroundColor="transparent"
+                      color="#FFFFFF"
+                    />
+                  </View>
+                </View>
+              ))}
               <Text style={styles.confirmId}>{t('ticketConfirmation.confirmId', { confirmId })}</Text>
               <Text style={styles.confirmHint}>{t('ticketConfirmation.qrHint')}</Text>
             </View>
@@ -147,10 +168,16 @@ const TicketConfirmationScreen = ({ navigation, route }) => {
 
         </View>
 
-        <TouchableOpacity style={styles.primaryBtn} onPress={goMyTickets} activeOpacity={0.85}>
+        <TouchableOpacity
+          style={styles.primaryBtn}
+          onPress={isGuest ? goLookup : goMyTickets}
+          activeOpacity={0.85}
+        >
           <LinearGradient colors={['#FF4B8C', '#e0356a']} start={{ x: 0, y: 0 }} end={{ x: 1, y: 0 }}
             style={styles.primaryBtnGrad}>
-            <Text style={styles.primaryBtnText}>{t('ticketConfirmation.button.viewTickets')}</Text>
+            <Text style={styles.primaryBtnText}>
+              {isGuest ? t('ticketConfirmation.button.lookupTickets') : t('ticketConfirmation.button.viewTickets')}
+            </Text>
           </LinearGradient>
         </TouchableOpacity>
 
@@ -177,6 +204,7 @@ const styles = StyleSheet.create({
   },
   successTitle: { fontSize: 26, fontWeight: '800', color: '#FFFFFF', marginBottom: 6 },
   successSub: { fontSize: 13, color: 'rgba(255,255,255,0.4)', textAlign: 'center' },
+  orderIdText: { fontSize: 12, color: 'rgba(255,255,255,0.35)', textAlign: 'center', marginTop: 8, fontWeight: '600' },
 
   ticketOuter: {
     width: TICKET_W,
@@ -249,6 +277,8 @@ const styles = StyleSheet.create({
   totalLineAmount: { fontSize: 18, color: '#FFFFFF', fontWeight: '800' },
 
   qrSection: { alignItems: 'center', gap: 10 },
+  qrTicketBlock: { alignItems: 'center', marginBottom: 12 },
+  qrTicketLabel: { fontSize: 12, fontWeight: '700', color: 'rgba(255,255,255,0.55)', marginBottom: 8 },
   qrWrap: {
     padding: 16, borderRadius: 16,
     backgroundColor: 'rgba(255,255,255,0.04)',

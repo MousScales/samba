@@ -9,101 +9,187 @@ import {
   Platform,
   FlatList,
   Animated,
+  Easing,
   StatusBar,
   TextInput,
-  Alert,
   ActivityIndicator,
 } from 'react-native';
-import { Text, useTheme, Icon } from '@rneui/themed';
+import { Text, Icon } from '@rneui/themed';
 import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 import { LinearGradient } from 'expo-linear-gradient';
 import CustomNavBar from '../components/CustomNavBar';
+import SambaBackground from '../components/SambaBackground';
+import { samba } from '../theme/samba';
 import PortraitEventCard from '../components/PortraitEventCard';
 import { useEvents } from '../context/EventsContext';
 import { useAuth } from '../context/AuthContext';
+import { getGoogleMapsApiKey } from '../config/env';
 import { useLanguage } from '../context/LanguageContext';
-import { formatCount } from '../utils/formatNumbers';
 import { useSubtleEntrance } from '../utils/useSubtleEntrance';
 
-const { width, height: SCREEN_HEIGHT } = Dimensions.get('window');
-const HEADER_HEIGHT = 52;
-const NAV_RESERVED = 110;
-
-const CATEGORIES = [
-  { id: 'Discover', key: 'home.category.discover', emoji: '🌐' },
-  { id: 'Sports',   key: 'home.category.sports',   emoji: '⚽' },
-  { id: 'Music',    key: 'home.category.music',    emoji: '🎵' },
-  { id: 'Shows',    key: 'home.category.shows',    emoji: '🎭' },
-  { id: 'Food',     key: 'home.category.food',     emoji: '🍔' },
-  { id: 'Arts',     key: 'home.category.arts',     emoji: '🎨' },
-  { id: 'Nightlife',key: 'home.category.nightlife',emoji: '🌙' },
-];
-
-const CATEGORY_KEYS = {
-  Discover: 'home.category.discover',
-  Sports: 'home.category.sports',
-  Music: 'home.category.music',
-  Shows: 'home.category.shows',
-  Food: 'home.category.food',
-  Arts: 'home.category.arts',
-  Nightlife: 'home.category.nightlife',
-};
-
-const TimeFilter = ({ title, isActive, onPress }) => {
-  const { theme } = useTheme();
-  return (
-    <TouchableOpacity
-      style={[
-        styles.filterButton,
-        { 
-          backgroundColor: isActive ? 'rgba(255,255,255,0.15)' : 'rgba(42, 42, 42, 0.8)',
-          borderWidth: isActive ? 0 : 1,
-          borderColor: isActive ? 'transparent' : theme.colors.border,
-        }
-      ]}
-      onPress={onPress}
-      activeOpacity={0.7}
-    >
-      <Text
-        style={[
-          styles.filterText,
-          { color: isActive ? '#FFFFFF' : theme.colors.textSecondary }
-        ]}
-      >
-        {title}
-      </Text>
-    </TouchableOpacity>
-  );
-};
-
-const PriceFilter = ({ title, isActive, onPress }) => {
-  const { theme } = useTheme();
-  return (
-    <TouchableOpacity
-      style={[
-        styles.filterButton,
-        { 
-          backgroundColor: isActive ? 'rgba(255,255,255,0.15)' : 'rgba(42, 42, 42, 0.8)',
-          borderWidth: isActive ? 0 : 1,
-          borderColor: isActive ? 'transparent' : theme.colors.border,
-        }
-      ]}
-      onPress={onPress}
-      activeOpacity={0.7}
-    >
-      <Text
-        style={[
-          styles.filterText,
-          { color: isActive ? '#FFFFFF' : theme.colors.textSecondary }
-        ]}
-      >
-        {title}
-      </Text>
-    </TouchableOpacity>
-  );
-};
+const { width } = Dimensions.get('window');
+const ACCENT = samba.pink;
+const SECONDARY = samba.green;
+const FEATURED_WIDTH = width - 32;
+const FEATURED_HEIGHT = 300;
+const TRENDING_CARD_WIDTH = Math.round(width * 0.42);
 
 const CARD_WIDTH = width - 32;
+
+const TICKER_KEYS = [
+  'home.ticker.discover',
+  'home.ticker.tickets',
+  'home.ticker.nightOut',
+  'home.ticker.city',
+  'home.ticker.variety',
+  'home.ticker.secure',
+  'home.ticker.local',
+];
+
+const TICKER_SEPARATOR = '          •          ';
+
+const PromoTicker = () => {
+  const { t } = useLanguage();
+  const scrollAnim = useRef(new Animated.Value(0)).current;
+  const [segmentWidth, setSegmentWidth] = useState(0);
+
+  const tickerLine = useMemo(() => {
+    const messages = TICKER_KEYS.map((key) => t(key));
+    return messages.join(TICKER_SEPARATOR);
+  }, [t]);
+
+  useEffect(() => {
+    if (!segmentWidth) return undefined;
+
+    scrollAnim.setValue(0);
+    const anim = Animated.loop(
+      Animated.timing(scrollAnim, {
+        toValue: -segmentWidth,
+        duration: segmentWidth * 18,
+        easing: Easing.linear,
+        useNativeDriver: true,
+      }),
+    );
+    anim.start();
+    return () => anim.stop();
+  }, [segmentWidth, scrollAnim, tickerLine]);
+
+  return (
+    <View style={styles.tickerWrap}>
+      <Animated.View
+        style={[styles.tickerTrack, { transform: [{ translateX: scrollAnim }] }]}
+      >
+        <View
+          style={styles.tickerSegment}
+          onLayout={(e) => setSegmentWidth(e.nativeEvent.layout.width)}
+        >
+          <Text style={styles.tickerText} numberOfLines={1}>{tickerLine}</Text>
+        </View>
+        <View style={styles.tickerSegment}>
+          <Text style={styles.tickerText} numberOfLines={1}>{tickerLine}</Text>
+        </View>
+      </Animated.View>
+    </View>
+  );
+};
+
+const FeaturedCard = ({ event, onPress }) => {
+  const { t } = useLanguage();
+  const isSoldOut = event.spotsLeft === 0;
+  const spotsLabel = event.spotsLeft === '∞'
+    ? t('home.spots.unlimitedLeft')
+    : isSoldOut
+      ? t('home.spots.soldOut')
+      : t('home.spots.left', { count: event.spotsLeft });
+
+  return (
+    <TouchableOpacity
+      style={[styles.featuredCard, { width: FEATURED_WIDTH, height: FEATURED_HEIGHT }]}
+      onPress={isSoldOut ? undefined : onPress}
+      activeOpacity={0.9}
+      disabled={isSoldOut}
+    >
+      <Image source={{ uri: event.image }} style={StyleSheet.absoluteFill} resizeMode="cover" />
+      <LinearGradient
+        colors={['rgba(0,0,0,0.15)', 'transparent', 'rgba(0,0,0,0.5)', 'rgba(0,0,0,0.92)']}
+        locations={[0, 0.3, 0.65, 1]}
+        style={StyleSheet.absoluteFill}
+      />
+      <View style={styles.featuredContent}>
+        <View style={styles.featuredTopRow}>
+          <View style={styles.featuredBadge}>
+            <Text style={styles.featuredBadgeText}>{t('home.featured').toUpperCase()}</Text>
+          </View>
+          <Text style={[styles.spotsText, isSoldOut && styles.spotsTextSoldOut]}>
+            {spotsLabel}
+          </Text>
+        </View>
+
+        <View style={styles.featuredBottom}>
+          <Text style={styles.featuredTitle} numberOfLines={2}>{event.title}</Text>
+          <View style={styles.featuredMetaRow}>
+            <Icon name="map-pin" type="feather" size={13} color="rgba(255,255,255,0.75)" />
+            <Text style={styles.featuredMetaText} numberOfLines={1}>
+              {(event.location || t('common.venueTbd')).toUpperCase()}
+            </Text>
+          </View>
+          <View style={styles.featuredMetaRow}>
+            <Icon name="calendar" type="feather" size={13} color="rgba(255,255,255,0.75)" />
+            <Text style={styles.featuredMetaText} numberOfLines={1}>
+              {[event.date, event.time].filter(Boolean).join(' · ').toUpperCase()}
+            </Text>
+          </View>
+          <TouchableOpacity
+            style={[styles.featuredCta, isSoldOut && styles.featuredCtaDisabled]}
+            onPress={isSoldOut ? undefined : onPress}
+            activeOpacity={0.85}
+            disabled={isSoldOut}
+          >
+            <Text style={styles.featuredCtaText}>
+              {isSoldOut ? t('home.spots.soldOut') : t('eventDetails.button.getTickets')}
+            </Text>
+          </TouchableOpacity>
+        </View>
+      </View>
+    </TouchableOpacity>
+  );
+};
+
+const FeaturedCarousel = ({ events, onEventPress, activeIndex, onIndexChange }) => {
+  if (!events?.length) return null;
+
+  return (
+    <View style={styles.featuredSection}>
+      <FlatList
+        data={events}
+        horizontal
+        showsHorizontalScrollIndicator={false}
+        snapToInterval={FEATURED_WIDTH + 12}
+        decelerationRate="fast"
+        contentContainerStyle={styles.featuredList}
+        onMomentumScrollEnd={(e) => {
+          const index = Math.round(e.nativeEvent.contentOffset.x / (FEATURED_WIDTH + 12));
+          onIndexChange(Math.min(index, events.length - 1));
+        }}
+        keyExtractor={(item) => `featured-${item.id}`}
+        renderItem={({ item }) => (
+          <FeaturedCard event={item} onPress={() => onEventPress(item)} />
+        )}
+        ItemSeparatorComponent={() => <View style={{ width: 12 }} />}
+      />
+      {events.length > 1 && (
+        <View style={styles.carouselDots}>
+          {events.map((_, i) => (
+            <View
+              key={i}
+              style={[styles.carouselDot, i === activeIndex && styles.carouselDotActive]}
+            />
+          ))}
+        </View>
+      )}
+    </View>
+  );
+};
 
 const EventCard = ({ event, onPress, animatedValue, cardWidth = CARD_WIDTH, aspectRatio = 1.32, bottomMargin = 14 }) => {
   const { t } = useLanguage();
@@ -158,102 +244,20 @@ const EventCard = ({ event, onPress, animatedValue, cardWidth = CARD_WIDTH, aspe
   );
 };
 
-// Enhanced organizer card for followed organizers
-const FollowedOrganizerCard = ({ organizer, theme, onPress, animatedValue }) => {
-  const { t } = useLanguage();
-  const translateY = animatedValue.interpolate({
-    inputRange: [0, 1],
-    outputRange: [8, 0],
-  });
-  
-  const opacity = animatedValue.interpolate({
-    inputRange: [0, 1],
-    outputRange: [0, 1],
-  });
-
-  // Generate avatar initials from name
-  const getInitials = (name) => {
-    if (!name) return '?';
-    return name.split(' ').map(word => word[0]).join('').toUpperCase().slice(0, 2);
-  };
-
-  // Generate a consistent color based on name
-  const getAvatarColor = (name) => {
-    if (!name) return '#FF4B8C';
-    const colors = ['#FF4B8C', '#8B5CF6', '#06B6D4', '#10B981', '#F59E0B', '#EF4444', '#3B82F6'];
-    let hash = 0;
-    for (let i = 0; i < name.length; i++) {
-      hash = name.charCodeAt(i) + ((hash << 5) - hash);
-    }
-    return colors[Math.abs(hash) % colors.length];
-  };
-
-  // Clean up the organizer name (remove hash if it looks like one)
-  const getDisplayName = (name) => {
-    if (!name) return t('home.organizer.unknown');
-    // If it's a long hash-like string, extract a more readable name
-    if (name.length > 20 && name.includes('b') && name.includes('f')) {
-      return t('common.eventOrganizer');
-    }
-    return name;
-  };
-
-  const displayName = getDisplayName(organizer.name);
-  const avatarColor = getAvatarColor(displayName);
-  const initials = getInitials(displayName);
-
-  return (
-    <Animated.View
-      style={{
-        opacity,
-        transform: [{ translateY }],
-      }}
-    >
-      <TouchableOpacity
-        style={styles.followedOrganizerCard}
-        activeOpacity={0.8}
-        onPress={() => onPress(organizer)}
-      >
-        {/* Avatar section */}
-        <View style={styles.organizerAvatarSection}>
-          <View style={styles.avatarContainer}>
-            <Text style={styles.avatarInitials}>{initials}</Text>
-          </View>
-        </View>
-        
-        {/* Organizer info */}
-        <View style={styles.organizerInfo}>
-          <Text style={styles.organizerName} numberOfLines={1}>
-            {displayName}
-                </Text>
-        </View>
-
-
-      </TouchableOpacity>
-    </Animated.View>
-  );
-};
-
 const HomeScreen = ({ navigation }) => {
-  const { theme } = useTheme();
   const { t, locale } = useLanguage();
   const insets = useSafeAreaInsets();
-  const { userLocation, locationPermission, requestLocationPermission } = useAuth();
-  const { getUpcomingEvents, getLiveEvents, events, loading, followedOrganizers, isFollowingOrganizer, organizerFollowers, getEventsNearUser, getEventsByState } = useEvents();
-  const [searchQuery, setSearchQuery] = useState('');
-  const [filteredEvents, setFilteredEvents] = useState([]);
+  const { userLocation, locationPermission, requestLocationPermission, getCurrentLocation, updateUserLocation } = useAuth();
+  const { getUpcomingEvents, getLiveEvents } = useEvents();
+  const [featuredIndex, setFeaturedIndex] = useState(0);
 
   // Location panel state
   const [locationOpen, setLocationOpen] = useState(false);
   const [locationSearch, setLocationSearch] = useState('');
   const [locationSuggestions, setLocationSuggestions] = useState([]);
   const [locationSearching, setLocationSearching] = useState(false);
-  const [selectedCity, setSelectedCity] = useState(null);
   const locationSearchTimeout = useRef(null);
   const panelAnim = useRef(new Animated.Value(0)).current;
-  const feedListRef = useRef(null);
-  const isLoopJumpingRef = useRef(false);
-
   const openLocationSheet = () => {
     setLocationOpen(true);
     Animated.spring(panelAnim, {
@@ -285,14 +289,7 @@ const HomeScreen = ({ navigation }) => {
     }
   };
 
-  // Category filter state
-  const [activeCategory, setActiveCategory] = useState('Discover');
-
-  const { fadeAnim, slideAnim } = useSubtleEntrance();
-
-  const feedItemHeight = SCREEN_HEIGHT - insets.top - HEADER_HEIGHT - NAV_RESERVED;
-  const feedCardWidth = width - 32;
-  const feedCardAspect = (feedItemHeight - 20) / feedCardWidth;
+  const { fadeAnim } = useSubtleEntrance();
 
   const formatEventsForDisplay = (events) => {
     if (!events) return [];
@@ -346,158 +343,10 @@ const HomeScreen = ({ navigation }) => {
   const featuredEvents = [...upcomingEvents, ...liveEvents]
     .filter(event => event.showOnExplore !== false) // Only show events that are set to appear on explore
     .sort((a, b) => new Date(a.date) - new Date(b.date));
-  const displayEvents = formatEventsForDisplay(featuredEvents.slice(0, 10));
+  const allDisplayEvents = formatEventsForDisplay(featuredEvents);
 
-  // Get events near user's location
-  const nearbyEvents = userLocation ? getEventsNearUser(userLocation, 50) : [];
-  const displayNearbyEvents = formatEventsForDisplay(nearbyEvents.slice(0, 10));
-
-  // Get events in user's state (fallback if no location)
-  const stateEvents = userLocation?.state ? getEventsByState(userLocation.state) : [];
-  const displayStateEvents = formatEventsForDisplay(stateEvents.slice(0, 10));
-
-  // Get events by time periods
-  const getTodayEvents = () => {
-    const today = new Date();
-    today.setHours(0, 0, 0, 0);
-    const tomorrow = new Date(today);
-    tomorrow.setDate(tomorrow.getDate() + 1);
-    
-    return [...upcomingEvents, ...liveEvents].filter(event => {
-      const eventDate = new Date(event.date);
-      eventDate.setHours(0, 0, 0, 0);
-      return eventDate.getTime() === today.getTime();
-    });
-  };
-
-  const getTomorrowEvents = () => {
-    const tomorrow = new Date();
-    tomorrow.setDate(tomorrow.getDate() + 1);
-    tomorrow.setHours(0, 0, 0, 0);
-    const dayAfter = new Date(tomorrow);
-    dayAfter.setDate(dayAfter.getDate() + 1);
-    
-    return [...upcomingEvents, ...liveEvents].filter(event => {
-      const eventDate = new Date(event.date);
-      eventDate.setHours(0, 0, 0, 0);
-      return eventDate.getTime() === tomorrow.getTime();
-    });
-  };
-
-  const getThisWeekEvents = () => {
-    const today = new Date();
-    const startOfWeek = new Date(today);
-    startOfWeek.setDate(today.getDate() - today.getDay());
-    startOfWeek.setHours(0, 0, 0, 0);
-    
-    const endOfWeek = new Date(startOfWeek);
-    endOfWeek.setDate(endOfWeek.getDate() + 6);
-    endOfWeek.setHours(23, 59, 59, 999);
-    
-    return [...upcomingEvents, ...liveEvents].filter(event => {
-      const eventDate = new Date(event.date);
-      return eventDate >= startOfWeek && eventDate <= endOfWeek;
-    });
-  };
-
-  const getFreeEvents = () => {
-    return [...upcomingEvents, ...liveEvents].filter(event => 
-      event.tickets && event.tickets.some(ticket => ticket.isFree)
-    );
-  };
-
-  const getPaidEvents = () => {
-    return [...upcomingEvents, ...liveEvents].filter(event => 
-      event.tickets && event.tickets.some(ticket => !ticket.isFree)
-    );
-  };
-
-  // Format events for different sections
-  const todayEvents = formatEventsForDisplay(getTodayEvents().slice(0, 10));
-  const tomorrowEvents = formatEventsForDisplay(getTomorrowEvents().slice(0, 10));
-  const thisWeekEvents = formatEventsForDisplay(getThisWeekEvents().slice(0, 10));
-  const freeEvents = formatEventsForDisplay(getFreeEvents().slice(0, 10));
-  const paidEvents = formatEventsForDisplay(getPaidEvents().slice(0, 10));
-
-  const feedEvents = useMemo(() => {
-    const all = formatEventsForDisplay([...getUpcomingEvents(), ...getLiveEvents()]
-      .filter(e => e.showOnExplore !== false)
-      .sort((a, b) => new Date(a.date) - new Date(b.date)));
-    if (activeCategory === 'Discover') return all;
-    return all.filter(e =>
-      e.category?.toLowerCase() === activeCategory.toLowerCase()
-    );
-  }, [events, activeCategory, locale, t]);
-
-  const feedLoopCount = feedEvents.length;
-  const endlessFeedEvents = useMemo(() => {
-    if (feedLoopCount <= 1) return feedEvents;
-    return [...feedEvents, ...feedEvents, ...feedEvents];
-  }, [feedEvents, feedLoopCount]);
-
-  useEffect(() => {
-    if (feedLoopCount <= 1 || !feedListRef.current) return undefined;
-    const timer = setTimeout(() => {
-      feedListRef.current?.scrollToOffset({
-        offset: feedLoopCount * feedItemHeight,
-        animated: false,
-      });
-    }, 0);
-    return () => clearTimeout(timer);
-  }, [activeCategory, feedLoopCount, feedItemHeight]);
-
-  const handleFeedScrollEnd = (e) => {
-    if (feedLoopCount <= 1 || isLoopJumpingRef.current) return;
-
-    const offsetY = e.nativeEvent.contentOffset.y;
-    const index = Math.round(offsetY / feedItemHeight);
-    let jumpToIndex = null;
-
-    if (index < feedLoopCount) {
-      jumpToIndex = index + feedLoopCount;
-    } else if (index >= feedLoopCount * 2) {
-      jumpToIndex = index - feedLoopCount;
-    }
-
-    if (jumpToIndex == null) return;
-
-    isLoopJumpingRef.current = true;
-    feedListRef.current?.scrollToOffset({
-      offset: jumpToIndex * feedItemHeight,
-      animated: false,
-    });
-    requestAnimationFrame(() => {
-      isLoopJumpingRef.current = false;
-    });
-  };
-
-  // Debug logging
-  console.log('🏠 HomeScreen Location Debug:', {
-    locationPermission,
-    userLocation,
-    nearbyEvents: nearbyEvents.length,
-    stateEvents: stateEvents.length,
-    totalEvents: events.length,
-    todayEvents: todayEvents.length,
-    tomorrowEvents: tomorrowEvents.length,
-    thisWeekEvents: thisWeekEvents.length,
-    freeEvents: freeEvents.length,
-    paidEvents: paidEvents.length,
-  });
-
-  // Location permission prompt
-  const handleLocationRequest = async () => {
-    if (locationPermission === null) {
-      const result = await requestLocationPermission();
-      if (!result.granted) {
-        Alert.alert(
-          t('home.alert.location.title'),
-          t('home.alert.location.message'),
-          [{ text: t('common.ok') }]
-        );
-      }
-    }
-  };
+  const featuredDisplayEvents = allDisplayEvents.slice(0, 5);
+  const trendingDisplayEvents = allDisplayEvents;
 
   const searchCities = async (query) => {
     if (!query || query.length < 2) {
@@ -506,7 +355,7 @@ const HomeScreen = ({ navigation }) => {
     }
     setLocationSearching(true);
     try {
-      const GOOGLE_KEY = process.env.EXPO_PUBLIC_GOOGLE_MAPS_API_KEY;
+      const GOOGLE_KEY = getGoogleMapsApiKey();
       const response = await fetch(
         `https://maps.googleapis.com/maps/api/place/autocomplete/json?input=${encodeURIComponent(query)}&types=(cities)&language=en&key=${GOOGLE_KEY}`
       );
@@ -539,107 +388,96 @@ const HomeScreen = ({ navigation }) => {
     locationSearchTimeout.current = setTimeout(() => searchCities(text), 350);
   };
 
-  const handleSelectCity = (suggestion) => {
-    setSelectedCity(suggestion.city);
+  const handleSelectCity = async (suggestion) => {
     closeLocationSheet();
+    try {
+      const GOOGLE_KEY = getGoogleMapsApiKey();
+      const res = await fetch(
+        `https://maps.googleapis.com/maps/api/place/details/json?place_id=${suggestion.id}&fields=geometry&key=${GOOGLE_KEY}`
+      );
+      const data = await res.json();
+      const loc = data.result?.geometry?.location;
+      await updateUserLocation({
+        city: suggestion.city,
+        state: suggestion.state,
+        country: suggestion.country,
+        latitude: loc?.lat,
+        longitude: loc?.lng,
+        source: 'manual',
+      });
+    } catch {
+      await updateUserLocation({
+        city: suggestion.city,
+        state: suggestion.state,
+        country: suggestion.country,
+        source: 'manual',
+      });
+    }
   };
 
   const handleUseCurrentLocation = async () => {
     closeLocationSheet();
-    setSelectedCity(null);
-    await requestLocationPermission();
-  };
-
-  const displayCity = selectedCity || userLocation?.city || t('home.location.yourCity');
-
-  const handleSearch = (text) => {
-    setSearchQuery(text);
-    // Filter events based on search query
-    if (text) {
-      const filtered = displayEvents.filter(event => 
-        event.title.toLowerCase().includes(text.toLowerCase()) ||
-        event.location.toLowerCase().includes(text.toLowerCase()) ||
-        event.organizer.toLowerCase().includes(text.toLowerCase())
-      );
-      setFilteredEvents(filtered);
+    if (locationPermission !== true) {
+      await requestLocationPermission();
     } else {
-      setFilteredEvents([]);
+      await getCurrentLocation();
     }
   };
+
+  const displayCity = userLocation?.city || t('home.location.yourCity');
 
   const handleEventPress = (event) => {
     const eventData = event.originalEvent || event;
     navigation.navigate('EventDetails', { event: eventData });
   };
 
-  const handleOrganizerPress = (organizer) => {
-    navigation.navigate('OrganizerProfile', { 
-      organizerId: organizer.id,
-      organizerName: organizer.name 
-    });
-  };
-
   const handleSeeAllEvents = (filter = {}) => {
     navigation.navigate('Explore', { filter });
   };
 
-  const renderEventCard = ({ item: event }) => (
+  const renderTrendingCard = ({ item: event }) => (
     <EventCard
       event={event}
       onPress={() => handleEventPress(event)}
       animatedValue={fadeAnim}
-      cardWidth={(width - 48) / 2}
+      cardWidth={TRENDING_CARD_WIDTH}
+      aspectRatio={1.45}
+      bottomMargin={0}
     />
   );
 
-  const EventSection = ({ title, events, onSeeAll, emptyMessage, emptySubtext }) => {
+  const EventSection = ({ title, events, onSeeAll }) => {
     const { t: tSection } = useLanguage();
-    // Only render the section if there are events
-    if (!events || events.length === 0) {
-      return null;
-    }
+    if (!events?.length) return null;
 
-  return (
+    return (
       <View style={styles.section}>
         <View style={styles.sectionHeader}>
-          <Text style={[styles.sectionTitle, { color: theme.colors.text }]}>
-            {title}
-          </Text>
-          <TouchableOpacity 
-            style={styles.seeAllButton}
-            onPress={onSeeAll}
-          >
-            <Text style={[styles.seeAllText, { color: theme.colors.textSecondary }]}>
-              {tSection('common.seeAll')}
-            </Text>
-            <Icon
-              name="chevron-right"
-              type="feather"
-              size={16}
-              color={theme.colors.textSecondary}
-            />
+          <Text style={styles.sectionTitle}>{title}</Text>
+          <TouchableOpacity onPress={onSeeAll} activeOpacity={0.7}>
+            <Text style={styles.seeAllText}>{tSection('common.seeAll')}</Text>
           </TouchableOpacity>
         </View>
 
         <FlatList
           data={events}
-          renderItem={renderEventCard}
-          keyExtractor={(item) => item.id}
+          renderItem={renderTrendingCard}
+          keyExtractor={(item) => `trending-${item.id}`}
           horizontal
           showsHorizontalScrollIndicator={false}
           contentContainerStyle={styles.eventsList}
-          ItemSeparatorComponent={() => <View style={{ width: 16 }} />}
+          ItemSeparatorComponent={() => <View style={{ width: 12 }} />}
         />
       </View>
     );
   };
 
   return (
-    <SafeAreaView style={[styles.container, { backgroundColor: '#000000' }]} edges={[]}>
+    <SafeAreaView style={[styles.container, { backgroundColor: samba.bgDeep }]} edges={[]}>
+      <SambaBackground />
       <StatusBar barStyle="light-content" />
 
-      {/* Always-visible status bar fill — keeps the top dark edge-to-edge */}
-      <View style={{ height: insets.top, backgroundColor: '#1a1a1a' }} />
+      <View style={{ height: insets.top, backgroundColor: samba.lip }} />
 
       {/* Location search panel — expands below status bar, pushes header + content down */}
       <Animated.View
@@ -700,73 +538,56 @@ const HomeScreen = ({ navigation }) => {
         <View style={styles.sheetHandle} />
       </Animated.View>
 
-      {/* Header — always paddingTop: 12, panel above handles the safe area */}
+      {/* Header */}
       <View style={[styles.header, { paddingTop: 12 }]}>
-        <Text style={styles.appNameText}>{t('brand.name')}</Text>
+        <Text style={styles.appNameText} pointerEvents="none">{t('brand.name')}</Text>
 
-        {/* Location picker - right side */}
         <TouchableOpacity
-          style={styles.locationPicker}
-          activeOpacity={0.7}
+          style={styles.headerLocation}
           onPress={toggleLocationSheet}
+          activeOpacity={0.7}
         >
-          <Text style={styles.locationCity}>{displayCity}</Text>
+          <Text style={styles.locationHeaderText} numberOfLines={1}>{displayCity}</Text>
           <Icon
             name={locationOpen ? 'chevron-up' : 'chevron-down'}
             type="feather"
-            size={14}
-            color="#FF4B8C"
-            style={{ marginLeft: 2 }}
+            size={13}
+            color="rgba(255,255,255,0.5)"
           />
         </TouchableOpacity>
       </View>
 
-      {/* TikTok-style feed — one event per screen, endless loop */}
-      <FlatList
-        ref={feedListRef}
-        data={endlessFeedEvents}
-        keyExtractor={(item, index) => `${item.id}-${index}`}
-        initialScrollIndex={feedLoopCount > 1 ? feedLoopCount : 0}
-        pagingEnabled
-        snapToInterval={feedItemHeight}
-        snapToAlignment="start"
-        decelerationRate="fast"
-        disableIntervalMomentum
-        bounces={false}
-        overScrollMode="never"
-        onMomentumScrollEnd={handleFeedScrollEnd}
-        onScrollEndDrag={handleFeedScrollEnd}
-        getItemLayout={(_, index) => ({
-          length: feedItemHeight,
-          offset: feedItemHeight * index,
-          index,
-        })}
-        renderItem={({ item: event }) => (
-          <View style={[styles.feedPage, { height: feedItemHeight }]}>
-            <EventCard
-              event={event}
-              onPress={() => handleEventPress(event)}
-              animatedValue={fadeAnim}
-              cardWidth={feedCardWidth}
-              aspectRatio={feedCardAspect}
-              bottomMargin={0}
-            />
+      <ScrollView
+        style={styles.scrollView}
+        contentContainerStyle={styles.scrollContent}
+        showsVerticalScrollIndicator={false}
+        keyboardShouldPersistTaps="handled"
+      >
+        {/* Featured carousel */}
+        {featuredDisplayEvents.length > 0 ? (
+          <FeaturedCarousel
+            events={featuredDisplayEvents}
+            onEventPress={handleEventPress}
+            activeIndex={featuredIndex}
+            onIndexChange={setFeaturedIndex}
+          />
+        ) : (
+          <View style={styles.emptyFeatured}>
+            <Text style={styles.emptyStateTitle}>{t('home.empty.noEvents')}</Text>
+            <Text style={styles.emptyStateSubtext}>{t('home.empty.checkBackSoon')}</Text>
           </View>
         )}
-        showsVerticalScrollIndicator={false}
-        ListEmptyComponent={
-          <View style={[styles.emptyStateContainer, { height: feedItemHeight }]}>
-            <Text style={[styles.emptyStateTitle, { color: '#FFFFFF', marginTop: 60 }]}>
-              {activeCategory === 'Discover'
-                ? t('home.empty.noEvents')
-                : t('home.empty.noCategoryEvents', { category: t(CATEGORY_KEYS[activeCategory]) })}
-            </Text>
-            <Text style={[styles.emptyStateSubtext, { color: 'rgba(255,255,255,0.5)', textAlign: 'center', marginTop: 8 }]}>
-              {t('home.empty.checkBackSoon')}
-            </Text>
-          </View>
-        }
-      />
+
+        <PromoTicker />
+
+        {/* Trending events */}
+        <EventSection
+          title={t('home.trending')}
+          events={trendingDisplayEvents}
+          onSeeAll={() => handleSeeAllEvents()}
+        />
+
+      </ScrollView>
       
       <CustomNavBar activeScreen="Home" />
     </SafeAreaView>
@@ -776,7 +597,7 @@ const HomeScreen = ({ navigation }) => {
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: '#000000',
+    backgroundColor: samba.bgDeep,
   },
 
   scrollView: {
@@ -866,24 +687,14 @@ const styles = StyleSheet.create({
     fontSize: 16,
     fontWeight: '700',
     color: '#FFFFFF',
-    textShadowColor: 'rgba(64, 224, 255, 0.3)',
+    textShadowColor: 'rgba(255, 75, 140, 0.3)',
     textShadowOffset: { width: 0, height: 2 },
     textShadowRadius: 4,
-  },
-  seeAllButton: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    paddingHorizontal: 12,
-    paddingVertical: 6,
-    borderRadius: 20,
-    backgroundColor: 'rgba(255, 255, 255, 0.08)',
-    borderWidth: 1,
-    borderColor: 'rgba(255, 255, 255, 0.1)',
   },
   seeAllText: {
     fontSize: 14,
     fontWeight: '600',
-    marginRight: 4,
+    color: ACCENT,
   },
   eventsList: {
     paddingLeft: 16,
@@ -1064,7 +875,7 @@ const styles = StyleSheet.create({
     borderRadius: 16,
   },
   organizerName: {
-    color: '#FFD700', // Yellow color for organizer names
+    color: SECONDARY,
     fontSize: 14,
     fontWeight: '600',
     textShadowColor: 'rgba(0, 0, 0, 0.75)',
@@ -1074,10 +885,11 @@ const styles = StyleSheet.create({
   header: {
     flexDirection: 'row',
     alignItems: 'center',
-    justifyContent: 'space-between',
-    paddingHorizontal: 24,
+    justifyContent: 'flex-end',
+    position: 'relative',
+    paddingHorizontal: 20,
     paddingBottom: 18,
-    backgroundColor: '#1a1a1a',
+    backgroundColor: samba.lip,
     borderBottomLeftRadius: 28,
     borderBottomRightRadius: 28,
     marginBottom: 8,
@@ -1093,22 +905,146 @@ const styles = StyleSheet.create({
       },
     }),
   },
-  appNameText: {
-    fontSize: 26,
-    fontWeight: '800',
-    color: '#FFFFFF',
-    letterSpacing: 1,
+  headerLocation: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+    zIndex: 1,
   },
-  locationPicker: {
+  locationHeaderText: {
+    fontSize: 14,
+    fontWeight: '600',
+    color: '#FFFFFF',
+    maxWidth: 110,
+  },
+  appNameText: {
+    position: 'absolute',
+    left: 0,
+    right: 0,
+    textAlign: 'center',
+    fontSize: 26,
+    fontWeight: '900',
+    color: '#FFFFFF',
+    letterSpacing: 3,
+    textTransform: 'uppercase',
+  },
+  featuredSection: {
+    marginBottom: 8,
+  },
+  tickerWrap: {
+    overflow: 'hidden',
+    paddingVertical: 12,
+    marginBottom: 4,
+  },
+  tickerTrack: {
     flexDirection: 'row',
     alignItems: 'center',
   },
-  locationCity: {
-    fontSize: 22,
-    fontWeight: '700',
-    color: '#FF4B8C',
+  tickerSegment: {
+    flexShrink: 0,
+    paddingRight: 0,
+  },
+  tickerText: {
+    fontSize: 13,
+    fontWeight: '600',
+    color: SECONDARY,
+    letterSpacing: 0.8,
+    textTransform: 'uppercase',
+  },
+  featuredList: {
+    paddingHorizontal: 16,
+  },
+  featuredCard: {
+    borderRadius: 20,
+    overflow: 'hidden',
+    backgroundColor: '#1a1a1a',
+  },
+  featuredContent: {
+    flex: 1,
+    padding: 16,
+    justifyContent: 'space-between',
+  },
+  featuredTopRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'flex-start',
+  },
+  featuredBadge: {
+    backgroundColor: SECONDARY,
+    paddingHorizontal: 10,
+    paddingVertical: 5,
+    borderRadius: 6,
+  },
+  featuredBadgeText: {
+    fontSize: 10,
+    fontWeight: '800',
+    color: '#000000',
+    letterSpacing: 0.5,
+  },
+  featuredBottom: {
+    gap: 8,
+  },
+  featuredTitle: {
+    fontSize: 26,
+    fontWeight: '800',
+    color: '#FFFFFF',
+    lineHeight: 30,
+    textTransform: 'uppercase',
+  },
+  featuredMetaRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+  },
+  featuredMetaText: {
+    flex: 1,
+    fontSize: 11,
+    fontWeight: '600',
+    color: 'rgba(255,255,255,0.8)',
     letterSpacing: 0.3,
-    marginRight: 2,
+  },
+  featuredCta: {
+    alignSelf: 'flex-start',
+    marginTop: 4,
+    backgroundColor: ACCENT,
+    paddingHorizontal: 22,
+    paddingVertical: 12,
+    borderRadius: 10,
+  },
+  featuredCtaDisabled: {
+    backgroundColor: 'rgba(255,255,255,0.2)',
+  },
+  featuredCtaText: {
+    fontSize: 13,
+    fontWeight: '800',
+    color: '#FFFFFF',
+    letterSpacing: 0.5,
+  },
+  carouselDots: {
+    flexDirection: 'row',
+    justifyContent: 'center',
+    alignItems: 'center',
+    gap: 6,
+    marginTop: 12,
+    marginBottom: 4,
+  },
+  carouselDot: {
+    width: 6,
+    height: 6,
+    borderRadius: 3,
+    backgroundColor: 'rgba(255,255,255,0.25)',
+  },
+  carouselDotActive: {
+    width: 18,
+    backgroundColor: ACCENT,
+  },
+  emptyFeatured: {
+    marginHorizontal: 16,
+    marginBottom: 24,
+    padding: 32,
+    borderRadius: 20,
+    backgroundColor: 'rgba(255,255,255,0.05)',
+    alignItems: 'center',
   },
   title: {
     fontSize: 36,
@@ -1116,7 +1052,7 @@ const styles = StyleSheet.create({
     letterSpacing: 1,
   },
   locationPanel: {
-    backgroundColor: '#1a1a1a',
+    backgroundColor: samba.lip,
     overflow: 'hidden',
   },
   sheetHandle: {
@@ -1178,8 +1114,7 @@ const styles = StyleSheet.create({
     color: '#FFFFFF',
   },
   scrollContent: {
-    paddingHorizontal: 16,
-    paddingBottom: 700,
+    paddingBottom: 130,
   },
   categoriesScroll: {
     flexShrink: 0,

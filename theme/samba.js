@@ -1,0 +1,31 @@
+/** Samba premium dark theme tokens — green & pink on near-black */
+export const samba = {
+  bgDeep: '#030303',
+  bg: '#070707',
+  lip: '#1a1a1a',
+  pink: '#FF4B8C',
+  pinkDark: '#e0356a',
+  green: '#4ade80',
+  greenDark: '#22c55e',
+  pinkGradient: ['#FF4B8C', '#e0356a'],
+  greenGradient: ['#4ade80', '#22c55e'],
+  text: '#ffffff',
+  textMuted: 'rgba(255, 255, 255, 0.65)',
+  textFaint: 'rgba(255, 255, 255, 0.4)',
+  card: 'rgba(255, 255, 255, 0.06)',
+  border: 'rgba(255, 255, 255, 0.1)',
+  borderFocus: 'rgba(255, 75, 140, 0.4)',
+  btnText: '#ffffff',
+  btnTextOnGreen: '#000000',
+  pinkMuted: 'rgba(255, 75, 140, 0.2)',
+  pinkFaint: 'rgba(255, 75, 140, 0.1)',
+  pinkBorder: 'rgba(255, 75, 140, 0.3)',
+  greenMuted: 'rgba(74, 222, 128, 0.2)',
+  greenFaint: 'rgba(74, 222, 128, 0.1)',
+  greenBorder: 'rgba(74, 222, 128, 0.3)',
+  glowTop: 'rgba(255, 75, 140, 0.12)',
+  glowRight: 'rgba(74, 222, 128, 0.08)',
+  glowLeft: 'rgba(255, 75, 140, 0.05)',
+};
+
+export default samba;

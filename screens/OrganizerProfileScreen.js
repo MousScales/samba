@@ -37,18 +37,6 @@ const EventCard = ({ event, theme, onPress, isPastEvent = false, isOrganizerView
         
         {/* Top badges */}
         <View style={styles.topBadgesRow}>
-          {/* Attendee count badge */}
-          <View style={styles.attendeeBadge}>
-            <Icon
-              name="users"
-              type="feather"
-              size={12}
-              color="#FFFFFF"
-              style={styles.attendeeIcon}
-            />
-            <Text style={styles.attendeeCount}>{formatCount(event.bookedSpots)}</Text>
-          </View>
-          
           {/* Category badge */}
           <View style={styles.categoryBadgeOverlay}>
             <Text style={styles.categoryTextOverlay}>{event.category}</Text>
@@ -322,7 +310,7 @@ const OrganizerProfileScreen = ({ route, navigation }) => {
       title: "Event Organizer",
       avatar: null,
       profilePicture: null,
-      bio: `Professional event organizer with ${statistics.totalEvents} events and ${statistics.totalAttendees} happy attendees.`
+      bio: `Professional event organizer with ${statistics.totalEvents} events.`,
     };
   }, [passedOrganizerData, safeOrganizerId, safeOrganizerName, statistics]);
 
@@ -485,7 +473,6 @@ const OrganizerProfileScreen = ({ route, navigation }) => {
 
             <View style={[styles.statsContainer, { backgroundColor: theme.colors.surface }]}>
               {renderStat('calendar', statistics.totalEvents > 0 ? formatCount(statistics.totalEvents) : '0', 'Events')}
-              {renderStat('users', statistics.totalAttendees > 0 ? formatCount(statistics.totalAttendees) : '0', 'Attendees')}
               {renderStat('heart', formatCount(statistics.followers), 'Followers')}
         </View>
 
@@ -727,7 +714,7 @@ const styles = StyleSheet.create({
     left: 12,
     right: 12,
     flexDirection: 'row',
-    justifyContent: 'space-between',
+    justifyContent: 'flex-end',
     alignItems: 'flex-start',
   },
   attendeeBadge: {

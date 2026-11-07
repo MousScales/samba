@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect } from 'react';
 import {
   StyleSheet,
   View,
@@ -6,16 +6,17 @@ import {
   TouchableOpacity,
   Dimensions,
   Platform,
-  Animated,
   StatusBar,
 } from 'react-native';
-import { Text, Icon, useTheme } from '@rneui/themed';
+import { Text, Icon } from '@rneui/themed';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { LinearGradient } from 'expo-linear-gradient';
 import { useEvents } from '../context/EventsContext';
 import { formatCount } from '../utils/formatNumbers';
 import { useAuth } from '../context/AuthContext';
 import CustomNavBar from '../components/CustomNavBar';
+import SambaBackground from '../components/SambaBackground';
+import { samba } from '../theme/samba';
 import PortraitEventCard from '../components/PortraitEventCard';
 import { useLanguage } from '../context/LanguageContext';
 
@@ -64,54 +65,15 @@ const isUserEvent = (event, userId) =>
 
 const ManageEventsScreen = ({ navigation, route }) => {
   const insets = useSafeAreaInsets();
-  const { theme } = useTheme();
   const { t, locale } = useLanguage();
   const {
     events, deleteEvent, getLiveEvents, getUpcomingEvents, getPastEvents,
     triggerStatusUpdate, getEventStatus, getEventLiveStartTime,
   } = useEvents();
   const { user } = useAuth();
-  const [activeTab, setActiveTab] = useState('upcoming');
-  const [filterOpen, setFilterOpen] = useState(false);
-  const [fadeAnim] = useState(new Animated.Value(0));
+  const [activeTab, setActiveTab] = useState(route?.params?.initialTab || 'upcoming');
 
-  // widthAnim drives the container width (no native driver — layout prop)
-  const widthAnim = useRef(new Animated.Value(0)).current;
-  // slideAnim: 0 = pills off to the right, 1 = pills in place, -1 = pills off to the left
-  const slideAnim = useRef(new Animated.Value(0)).current;
-
-  const PILL_W = 94;
-  const GAP = 8;
-  const OPEN_W = PILL_W * 3 + GAP * 2;
-
-  const openFilter = () => {
-    setFilterOpen(true);
-    Animated.parallel([
-      Animated.spring(widthAnim, { toValue: 1, useNativeDriver: false, tension: 55, friction: 10 }),
-      Animated.spring(slideAnim, { toValue: 1, useNativeDriver: true, tension: 55, friction: 10 }),
-    ]).start();
-  };
-
-  const selectTab = (tab) => {
-    Animated.parallel([
-      Animated.spring(widthAnim, { toValue: 0, useNativeDriver: false, tension: 80, friction: 14 }),
-      Animated.spring(slideAnim, { toValue: -1, useNativeDriver: true, tension: 80, friction: 14 }),
-    ]).start(() => {
-      setActiveTab(tab);
-      setFilterOpen(false);
-      slideAnim.setValue(0);
-    });
-  };
-
-  useEffect(() => {
-    Animated.timing(fadeAnim, {
-      toValue: 1,
-      duration: 500,
-      useNativeDriver: true,
-    }).start();
-  }, []);
-
-  // Trigger status update when screen comes into focus
+  const TABS = ['upcoming', 'live', 'past'];
   useEffect(() => {
     const unsubscribe = navigation.addListener('focus', () => {
       triggerStatusUpdate();
@@ -191,11 +153,7 @@ const ManageEventsScreen = ({ navigation, route }) => {
     ) : null;
 
     return (
-      <Animated.View style={{
-        width: cardWidth,
-        opacity: fadeAnim,
-        transform: [{ translateY: fadeAnim.interpolate({ inputRange: [0, 1], outputRange: [20, 0] }) }],
-      }}>
+      <View style={{ width: cardWidth }}>
         <PortraitEventCard
           width={cardWidth}
           aspectRatio={multiEvent ? 1.22 : 1.32}
@@ -211,7 +169,7 @@ const ManageEventsScreen = ({ navigation, route }) => {
           onPress={onPress}
           topRight={topRightActions}
         />
-      </Animated.View>
+      </View>
     );
   };
 
@@ -225,19 +183,19 @@ const ManageEventsScreen = ({ navigation, route }) => {
     const config = emptyStateConfig[activeTab];
 
     return (
-      <Animated.View style={[styles.emptyStateContainer, { opacity: fadeAnim }]}>
+      <View style={styles.emptyStateContainer}>
         <Text style={styles.emptyStateTitle}>{config.title}</Text>
-      </Animated.View>
+      </View>
     );
   };
 
   return (
     <View style={styles.container}>
       <StatusBar barStyle="light-content" />
-      <LinearGradient colors={['#1A1A1A', '#000000']} style={StyleSheet.absoluteFill} />
+      <SambaBackground />
 
       {/* ── Lip header ── */}
-      <Animated.View style={[styles.lip, { paddingTop: insets.top + 14, opacity: fadeAnim }]}>
+      <View style={[styles.lip, { paddingTop: insets.top + 14 }]}>
         {/* Title row with New button inline */}
         <View style={styles.lipTitleRow}>
           <Text style={styles.headerTitle}>{t('manageEvents.title')}</Text>
@@ -249,38 +207,30 @@ const ManageEventsScreen = ({ navigation, route }) => {
           </TouchableOpacity>
         </View>
 
-        {/* Horizontal sliding filter pills */}
-        <View style={styles.filterRow}>
-          <View style={{ overflow: 'hidden' }}>
-            <Animated.View style={[styles.filterPillsRow, {
-              width: widthAnim.interpolate({ inputRange: [0, 1], outputRange: [PILL_W, OPEN_W] }),
-            }]}>
-              <TouchableOpacity style={[styles.filterPill, styles.filterPillActive]} onPress={openFilter} activeOpacity={0.7}>
-                <Text style={styles.filterPillTextActive}>
-                  {t(`manageEvents.filter.${activeTab}`)}
+        {/* Centered tabs */}
+        <View style={styles.tabRow}>
+          {TABS.map((tab) => {
+            const isActive = activeTab === tab;
+            return (
+              <TouchableOpacity
+                key={tab}
+                style={[styles.tabPill, isActive && styles.tabPillActive]}
+                onPress={() => setActiveTab(tab)}
+                activeOpacity={0.8}
+              >
+                <Text style={[styles.tabPillText, isActive && styles.tabPillTextActive]}>
+                  {t(`manageEvents.filter.${tab}`)}
                 </Text>
+                {tab === 'live' && userLiveEventsCount > 0 && (
+                  <View style={styles.liveBadge}>
+                    <Text style={styles.liveBadgeText}>{userLiveEventsCount}</Text>
+                  </View>
+                )}
               </TouchableOpacity>
-
-              {['upcoming', 'live', 'past'].filter(t => t !== activeTab).map((tab, i) => (
-                <Animated.View key={tab} style={{
-                  transform: [{ translateX: slideAnim.interpolate({
-                    inputRange: [-1, 0, 1],
-                    outputRange: [-(i + 1) * (PILL_W + GAP), (i + 1) * (PILL_W + GAP), 0],
-                  }) }],
-                  opacity: slideAnim.interpolate({ inputRange: [-1, 0, 1], outputRange: [0, 0, 1] }),
-                }}>
-                  <TouchableOpacity style={styles.filterPill} onPress={() => selectTab(tab)} activeOpacity={0.7}>
-                    <Text style={styles.filterPillText}>{t(`manageEvents.filter.${tab}`)}</Text>
-                    {tab === 'live' && userLiveEventsCount > 0 && (
-                      <View style={styles.liveBadge}><Text style={styles.liveBadgeText}>{userLiveEventsCount}</Text></View>
-                    )}
-                  </TouchableOpacity>
-                </Animated.View>
-              ))}
-            </Animated.View>
-          </View>
+            );
+          })}
         </View>
-      </Animated.View>
+      </View>
 
       {/* Events list — 2-col grid when multiple, single portrait when one */}
       <FlatList
@@ -303,9 +253,10 @@ const ManageEventsScreen = ({ navigation, route }) => {
 const styles = StyleSheet.create({
   container: {
     flex: 1,
+    backgroundColor: samba.bgDeep,
   },
   lip: {
-    backgroundColor: '#1a1a1a',
+    backgroundColor: samba.lip,
     paddingHorizontal: 22,
     paddingBottom: 18,
     borderBottomLeftRadius: 26,
@@ -326,37 +277,37 @@ const styles = StyleSheet.create({
     fontWeight: '800',
     color: '#FFFFFF',
   },
-  filterRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-  },
-  filterPillsRow: {
-    flexDirection: 'row',
-    gap: 8,
-    alignItems: 'center',
-  },
-  filterPill: {
-    width: 94,
+  tabRow: {
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'center',
-    gap: 4,
+    gap: 8,
+  },
+  tabPill: {
+    flex: 1,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 6,
     paddingVertical: 10,
+    paddingHorizontal: 8,
     borderRadius: 12,
     backgroundColor: 'rgba(255,255,255,0.08)',
   },
-  filterPillActive: {
-    backgroundColor: 'rgba(255,255,255,0.15)',
+  tabPillActive: {
+    backgroundColor: samba.pinkFaint,
+    borderWidth: 1,
+    borderColor: samba.pinkBorder,
   },
-  filterPillText: {
+  tabPillText: {
     fontSize: 13,
     fontWeight: '600',
-    color: 'rgba(255,255,255,0.6)',
+    color: 'rgba(255,255,255,0.55)',
   },
-  filterPillTextActive: {
+  tabPillTextActive: {
     fontSize: 13,
     fontWeight: '700',
-    color: '#FFFFFF',
+    color: samba.pink,
   },
   createButton: {
     borderRadius: 12,

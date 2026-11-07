@@ -126,7 +126,10 @@ function AttendeesScreen({ navigation, route }) {
 
   useEffect(() => {
     navigation.setOptions({ headerShown: false });
-  }, [navigation]);
+    if (!managerMode) {
+      navigation.goBack();
+    }
+  }, [navigation, managerMode]);
 
   useEffect(() => {
     const load = async () => {
@@ -217,12 +220,6 @@ function AttendeesScreen({ navigation, route }) {
         </View>
       )}
 
-      {!managerMode && (
-        <Text style={styles.attendeeCount}>
-          {t('guestListScreen.attending', { count: formatCount(guests.length) })}
-        </Text>
-      )}
-
       {loading ? (
         <View style={styles.emptyWrap}>
           <Text style={styles.emptySub}>{t('guestListScreen.loading')}</Text>
@@ -233,7 +230,7 @@ function AttendeesScreen({ navigation, route }) {
           <Text style={styles.emptyTitle}>{t('guestListScreen.empty')}</Text>
           <Text style={styles.emptySub}>{t('guestListScreen.emptySub')}</Text>
         </View>
-      ) : managerMode ? (
+      ) : (
         <FlatList
           data={filtered}
           keyExtractor={item => item.id}
@@ -241,16 +238,6 @@ function AttendeesScreen({ navigation, route }) {
           contentContainerStyle={[styles.listContent, { paddingBottom: insets.bottom + 24 }]}
           showsVerticalScrollIndicator={false}
           keyboardShouldPersistTaps="handled"
-        />
-      ) : (
-        <FlatList
-          data={attendeeGridData}
-          keyExtractor={item => item.id}
-          numColumns={3}
-          columnWrapperStyle={styles.gridRow}
-          renderItem={({ item }) => <FloatingProfile attendee={item} />}
-          contentContainerStyle={[styles.gridContent, { paddingBottom: insets.bottom + 24 }]}
-          showsVerticalScrollIndicator={false}
         />
       )}
     </View>

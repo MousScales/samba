@@ -1,5 +1,5 @@
 import React, { useRef, useEffect, useState } from 'react';
-import { View, TouchableOpacity, StyleSheet, Dimensions, Platform, Animated, Alert } from 'react-native';
+import { View, TouchableOpacity, StyleSheet, Dimensions, Platform, Animated, Alert, Image } from 'react-native';
 import { Icon, Text, Avatar, useTheme } from '@rneui/themed';
 import { useNavigation, CommonActions } from '@react-navigation/native';
 import { useAuth } from '../context/AuthContext';
@@ -7,12 +7,14 @@ import { useLanguage } from '../context/LanguageContext';
 
 const { width } = Dimensions.get('window');
 
-const TAB_SCREENS = ['Home', 'Explore', 'Profile', 'ManageEvents', 'Create', 'Dashboard'];
+const TAB_SCREENS = ['Home', 'Explore', 'Profile', 'ManageEvents', 'Create', 'Dashboard', 'ScannerEvents'];
 
 const CHAR_DELAY = 45; // ms per character
 
 // Single animated tab — icon when inactive, typed text when active
-const NavTab = ({ icon, iconType = 'feather', label, isActive, onPress, isAvatar, avatarSource, avatarTitle }) => {
+const SAMBA_LOGO = require('../assets/icon.png');
+
+const NavTab = ({ icon, iconType = 'feather', label, isActive, onPress, isAvatar, avatarSource, avatarTitle, showGuestLogo }) => {
   const [visibleChars, setVisibleChars] = useState(isActive ? label.length : 0);
   const iconAnim = useRef(new Animated.Value(isActive ? 0 : 1)).current;
   const typingTimer = useRef(null);
@@ -46,13 +48,17 @@ const NavTab = ({ icon, iconType = 'feather', label, isActive, onPress, isAvatar
       {/* Icon */}
       <Animated.View style={[styles.tabIconWrap, { opacity: iconAnim }]}>
         {isAvatar ? (
-          <Avatar
-            size={26}
-            rounded
-            source={avatarSource}
-            title={avatarTitle}
-            titleStyle={{ fontSize: 12, fontWeight: 'bold' }}
-          />
+          showGuestLogo ? (
+            <Image source={SAMBA_LOGO} style={styles.guestLogo} resizeMode="cover" />
+          ) : (
+            <Avatar
+              size={26}
+              rounded
+              source={avatarSource}
+              title={avatarTitle}
+              titleStyle={{ fontSize: 12, fontWeight: 'bold' }}
+            />
+          )
         ) : (
           <Icon name={icon} type={iconType} size={22} color="#9E9E9E" />
         )}
@@ -73,10 +79,11 @@ const DOUBLE_TAP_MS = 300;
 const CustomNavBar = ({ activeScreen }) => {
   const { theme } = useTheme();
   const navigation = useNavigation();
-  const { user, switchMode } = useAuth();
+  const { user, isAuthenticated, switchMode } = useAuth();
   const { t } = useLanguage();
-  const currentMode = user?.currentMode || 'attendee';
-  const isProvider = user?.role === 'provider';
+  const currentMode = isAuthenticated ? (user?.currentMode || 'attendee') : 'attendee';
+  const isProvider = isAuthenticated && user?.role === 'provider';
+  const isScanner = isAuthenticated && user?.scannerInfo?.status === 'active';
   const profileTapRef = useRef(null);
   const switchingRef = useRef(false);
 
@@ -91,10 +98,11 @@ const CustomNavBar = ({ activeScreen }) => {
     }
   };
 
-  const avatarSource = user?.profilePicture ? { uri: user.profilePicture } : undefined;
-  const avatarTitle = !user?.profilePicture
+  const avatarSource = isAuthenticated && user?.profilePicture ? { uri: user.profilePicture } : undefined;
+  const avatarTitle = isAuthenticated && !user?.profilePicture
     ? (user?.name ? user.name.split(' ').map(n => n[0]).join('').toUpperCase().slice(0, 2) : 'U')
     : undefined;
+  const showGuestLogo = !isAuthenticated;
 
   const orgAvatar = user?.providerInfo?.partyLogo;
   const orgName = user?.providerInfo?.organizationName || user?.name;
@@ -135,6 +143,11 @@ const CustomNavBar = ({ activeScreen }) => {
   };
 
   const handleProfilePress = () => {
+    if (!isProvider) {
+      navigateTo('Profile');
+      return;
+    }
+
     const now = Date.now();
 
     if (profileTapRef.current && now - profileTapRef.current < DOUBLE_TAP_MS) {
@@ -155,7 +168,24 @@ const CustomNavBar = ({ activeScreen }) => {
   return (
     <View style={styles.tabBarWrapper}>
       <View style={styles.tabBarContainer}>
-        {currentMode === 'provider' ? (
+        {currentMode === 'scanner' && isScanner ? (
+          <>
+            <NavTab
+              icon="maximize"
+              label={t('nav.scanner')}
+              isActive={activeScreen === 'ScannerEvents'}
+              onPress={() => navigateTo('ScannerEvents')}
+            />
+            <NavTab
+              label={t('nav.profile')}
+              isActive={activeScreen === 'Profile'}
+              onPress={() => navigateTo('Profile')}
+              isAvatar
+              avatarSource={avatarSource}
+              avatarTitle={avatarTitle}
+            />
+          </>
+        ) : currentMode === 'provider' ? (
           <>
             <NavTab
               icon="list"
@@ -194,12 +224,13 @@ const CustomNavBar = ({ activeScreen }) => {
               onPress={() => navigateTo('Explore')}
             />
             <NavTab
-              label={t('nav.profile')}
+              label={isAuthenticated ? t('nav.profile') : t('nav.signIn')}
               isActive={activeScreen === 'Profile'}
               onPress={handleProfilePress}
               isAvatar
               avatarSource={avatarSource}
               avatarTitle={avatarTitle}
+              showGuestLogo={showGuestLogo}
             />
           </>
         )}
@@ -256,6 +287,11 @@ const styles = StyleSheet.create({
     fontWeight: '700',
     color: '#FFFFFF',
     letterSpacing: 0.2,
+  },
+  guestLogo: {
+    width: 26,
+    height: 26,
+    borderRadius: 13,
   },
   createBtn: {
     width: 50,

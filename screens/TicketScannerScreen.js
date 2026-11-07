@@ -14,6 +14,8 @@ import { CameraView, useCameraPermissions } from 'expo-camera';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { LinearGradient } from 'expo-linear-gradient';
 import { useEvents } from '../context/EventsContext';
+import { useAuth } from '../context/AuthContext';
+import { scanTicketByQrViaSupabase } from '../services/eventsService';
 
 const { width } = Dimensions.get('window');
 
@@ -25,6 +27,7 @@ const TicketScannerScreen = ({ navigation, route }) => {
   const [showManualEntry, setShowManualEntry] = useState(false);
   const [manualTicketNumber, setManualTicketNumber] = useState('');
   const { scanTicket, getUserTickets } = useEvents();
+  const { isAuthenticated } = useAuth();
   
   // Get event data from route params
   const { event, eventId } = route.params || {};
@@ -59,15 +62,39 @@ const TicketScannerScreen = ({ navigation, route }) => {
         return false;
       }) : null;
       
+      if (!ticket && isAuthenticated) {
+        try {
+          const remote = await scanTicketByQrViaSupabase(data, finalEventId || null);
+          if (remote?.success) {
+            Alert.alert(
+              'Success',
+              `Ticket scanned successfully!\n\nTicket Type: ${remote.ticket?.ticketType}\nGuest: ${remote.ticket?.buyerName}`,
+              [{ text: 'Scan Another', onPress: () => { setScanned(false); setLoading(false); } }],
+            );
+            return;
+          }
+        } catch (remoteError) {
+          Alert.alert('Invalid Ticket', remoteError.message || 'This ticket was not found.');
+          setScanned(false);
+          setLoading(false);
+          return;
+        }
+      }
+
       if (!ticket) {
-        Alert.alert('Invalid Ticket', 'This ticket was not found.');
+        Alert.alert(
+          'Invalid Ticket',
+          isAuthenticated
+            ? 'This ticket was not found.'
+            : 'Sign in as an event host to scan tickets at the door.',
+        );
         setScanned(false);
         setLoading(false);
         return;
       }
       
       // Check if ticket belongs to this event
-      if (ticket.eventId !== finalEventId) {
+      if (finalEventId && ticket.eventId !== finalEventId) {
         Alert.alert('Wrong Event', 'This ticket is not for this event.');
         setScanned(false);
         setLoading(false);
@@ -75,22 +102,13 @@ const TicketScannerScreen = ({ navigation, route }) => {
       }
       
       // Scan the ticket using EventsContext
-      const result = await scanTicket(ticketId, finalEventId);
+      const result = await scanTicket(ticket.id, ticket.eventId || finalEventId);
       
       if (result.success) {
-        // Show success message
         Alert.alert(
           'Success',
           `Ticket scanned successfully!\n\nTicket Type: ${ticket.ticketType}\nEvent: ${ticket.eventTitle}`,
-          [
-            {
-              text: 'Scan Another',
-              onPress: () => {
-                setScanned(false);
-                setLoading(false);
-              }
-            }
-          ]
+          [{ text: 'Scan Another', onPress: () => { setScanned(false); setLoading(false); } }],
         );
       }
     } catch (error) {

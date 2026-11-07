@@ -20,12 +20,13 @@ import { LinearGradient } from 'expo-linear-gradient';
 import { useAuth } from '../context/AuthContext';
 import { useLanguage } from '../context/LanguageContext';
 import { isValidEmailFormat } from '../utils/validateEmail';
+import { navigateToScanTickets } from '../utils/scanNavigation';
 
 const { width, height } = Dimensions.get('window');
 
 const LoginScreen = ({ navigation }) => {
   const { theme } = useTheme();
-  const { login, checkEmail } = useAuth();
+  const { login, checkEmail, user, isAuthenticated } = useAuth();
   const { t } = useLanguage();
   const insets = useSafeAreaInsets();
   const [email, setEmail] = useState('');
@@ -161,7 +162,7 @@ const LoginScreen = ({ navigation }) => {
         // Success! Navigate to profile
     navigation.reset({
       index: 0,
-      routes: [{ name: 'Profile' }],
+      routes: [{ name: 'Home' }],
     });
       } else {
         // Show error
@@ -196,8 +197,7 @@ const LoginScreen = ({ navigation }) => {
   };
   
   const handleQRScan = () => {
-    // Navigate to verification code screen
-    navigation.navigate('VerificationCode');
+    navigateToScanTickets(navigation, { user, isAuthenticated });
   };
 
   const handleSignUp = () => {

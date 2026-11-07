@@ -1,4 +1,10 @@
 import { supabase } from '../config/supabase';
+import {
+  mapAppEventToRow,
+  syncEventForShare as syncEventForShareImpl,
+} from './shareService';
+
+export { mapAppEventToRow } from './shareService';
 
 const parseDate = (value) => {
   if (!value) return null;
@@ -45,6 +51,98 @@ export const mapEventRowToAppEvent = (row) => {
   };
 };
 
+export const fetchEventById = async (eventId) => {
+  if (!eventId) return null;
+
+  try {
+    const { data, error } = await supabase
+      .from('events')
+      .select('*')
+      .eq('id', eventId)
+      .maybeSingle();
+
+    if (error) {
+      console.warn('fetchEventById failed:', error.message);
+      return null;
+    }
+
+    return mapEventRowToAppEvent(data);
+  } catch (err) {
+    console.warn('fetchEventById:', err?.message || err);
+    return null;
+  }
+};
+
+export const purchaseTicketsViaSupabase = async ({
+  eventId,
+  tickets,
+  buyerName,
+  buyerEmail,
+  joinGuestList = true,
+  paymentId = null,
+  paymentStatus = 'demo_completed',
+  source = 'app',
+}) => {
+  const { data, error } = await supabase.rpc('purchase_tickets', {
+    p_event_id: eventId,
+    p_tickets: tickets,
+    p_buyer_name: buyerName,
+    p_buyer_email: buyerEmail,
+    p_join_guest_list: joinGuestList,
+    p_payment_id: paymentId,
+    p_payment_status: paymentStatus,
+    p_source: source,
+  });
+
+  if (error) throw new Error(error.message);
+  if (!data?.success) throw new Error('Purchase failed');
+  return data;
+};
+
+export const lookupTicketsViaSupabase = async (orderId, buyerEmail) => {
+  const { data, error } = await supabase.rpc('lookup_tickets', {
+    p_order_id: orderId,
+    p_buyer_email: buyerEmail,
+  });
+
+  if (error) throw new Error(error.message);
+  return data;
+};
+
+export const scanTicketByQrViaSupabase = async (qrCode, eventId = null) => {
+  const { data, error } = await supabase.rpc('scan_ticket_by_qr', {
+    p_qr_code: qrCode,
+    p_event_id: eventId,
+  });
+
+  if (error) throw new Error(error.message);
+  return data;
+};
+
+export const syncEventForSharing = async (event, organizerUserId) => {
+  if (organizerUserId) {
+    return syncEventForShareImpl(event, organizerUserId);
+  }
+  const row = mapAppEventToRow(event);
+  if (!row) return { ok: false, error: 'Invalid event' };
+
+  try {
+    const { error } = await supabase
+      .from('events')
+      .upsert(row, { onConflict: 'id' });
+
+    if (error) {
+      console.warn('syncEventForSharing failed:', error.message);
+      return { ok: false, error: error.message };
+    }
+
+    return { ok: true };
+  } catch (err) {
+    console.warn('syncEventForSharing:', err?.message || err);
+    return { ok: false, error: err?.message || 'Sync failed' };
+  }
+};
+
 export const fetchExploreEvents = async () => {
   try {
     const { data, error } = await supabase
@@ -80,4 +178,13 @@ export const fetchExploreEvents = async () => {
   }
 };
 
-export default { fetchExploreEvents, mapEventRowToAppEvent };
+export default {
+  fetchExploreEvents,
+  fetchEventById,
+  syncEventForSharing,
+  purchaseTicketsViaSupabase,
+  lookupTicketsViaSupabase,
+  scanTicketByQrViaSupabase,
+  mapEventRowToAppEvent,
+  mapAppEventToRow,
+};

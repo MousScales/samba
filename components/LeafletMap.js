@@ -2,7 +2,7 @@
  * LeafletMap — OpenStreetMap via WebView.
  * Works in Expo Go and any build without native Google Maps SDK compiled in.
  */
-import React, { useRef, useEffect, forwardRef, useImperativeHandle } from 'react';
+import React, { useRef, useEffect, useState, useMemo, forwardRef, useImperativeHandle } from 'react';
 import { StyleSheet, View } from 'react-native';
 import { WebView } from 'react-native-webview';
 
@@ -108,18 +108,27 @@ L.marker([${userLat}, ${userLng}], { icon: whiteLocationIcon(), zIndexOffset: 20
   .addTo(map);
 ` : ''}
 
-// ── Event pins ───────────────────────────────────────────────────────────────
-var pins   = ${JSON.stringify(pins)};
+// ── Event pins (updated from RN without reloading the map) ───────────────────
+var pins = [];
 var markers = {};
 
-pins.forEach(function(p) {
-  var m = L.marker([p.lat, p.lng], { icon: cardIcon(p.image, p.title, false) }).addTo(map);
-  markers[p.id] = m;
-  m.on('click', function(e) {
-    L.DomEvent.stopPropagation(e);
-    window.ReactNativeWebView.postMessage(JSON.stringify({ type:'markerPress', id: p.id }));
+window.setEventPins = function(nextPins) {
+  Object.keys(markers).forEach(function(id) {
+    map.removeLayer(markers[id]);
+    delete markers[id];
   });
-});
+  pins = nextPins || [];
+  pins.forEach(function(p) {
+    var m = L.marker([p.lat, p.lng], { icon: cardIcon(p.image, p.title, false) }).addTo(map);
+    markers[p.id] = m;
+    m.on('click', function(e) {
+      L.DomEvent.stopPropagation(e);
+      window.ReactNativeWebView.postMessage(JSON.stringify({ type:'markerPress', id: p.id }));
+    });
+  });
+};
+
+window.setEventPins(${JSON.stringify(pins)});
 
 // Highlight selected marker from RN
 document.addEventListener('message', function(e) {
@@ -155,39 +164,58 @@ const LeafletMap = forwardRef(function LeafletMap({
   style,
 }, ref) {
   const webRef = useRef(null);
+  const [mapReady, setMapReady] = useState(false);
+  const bootRef = useRef(null);
 
-  // Expose injectJavaScript so parent can pan/zoom the map
+  if (!bootRef.current) {
+    bootRef.current = {
+      lat: userLocation?.latitude ?? initialRegion?.latitude ?? 40.7128,
+      lng: userLocation?.longitude ?? initialRegion?.longitude ?? -74.006,
+      userLat: userLocation?.latitude,
+      userLng: userLocation?.longitude,
+    };
+  }
+
+  const panTo = (latitude, longitude, animate = true) => {
+    if (!webRef.current) return;
+    webRef.current.injectJavaScript(
+      `map.setView([${latitude},${longitude}], 14, {animate:${animate ? 'true' : 'false'}}); true;`
+    );
+  };
+
   useImperativeHandle(ref, () => ({
     injectJavaScript: (js) => webRef.current?.injectJavaScript(js),
-    animateToRegion: ({ latitude, longitude }) => {
-      webRef.current?.injectJavaScript(
-        `map.setView([${latitude},${longitude}], 14, {animate:true}); true;`
-      );
+    animateToRegion: ({ latitude, longitude }, duration = 500) => {
+      panTo(latitude, longitude, duration > 0);
     },
   }));
 
-  const lat  = initialRegion?.latitude  ?? 40.7128;
-  const lng  = initialRegion?.longitude ?? -74.006;
-  const zoom = 12;
-
-  // Pass image + title for each pin so the card marker can show them
-  const pins = pinEvents.map(e => ({
+  const pins = useMemo(() => pinEvents.map(e => ({
     id:    e.id,
     lat:   e._coords.latitude,
     lng:   e._coords.longitude,
     image: e.image || '',
     title: e.title || '',
-  }));
+  })), [pinEvents]);
 
-  const html = buildHtml({
-    lat, lng, zoom, pins,
-    userLat: userLocation?.latitude,
-    userLng: userLocation?.longitude,
-  });
+  const pinsKey = useMemo(() => pins.map(p => p.id).join(','), [pins]);
+
+  const html = useMemo(
+    () => buildHtml({
+      lat: bootRef.current.lat,
+      lng: bootRef.current.lng,
+      zoom: 14,
+      pins: [],
+      userLat: bootRef.current.userLat,
+      userLng: bootRef.current.userLng,
+    }),
+    [],
+  );
 
   const onMessage = (event) => {
     try {
       const msg = JSON.parse(event.nativeEvent.data);
+      if (msg.type === 'ready') setMapReady(true);
       if (msg.type === 'markerPress') onMarkerPress?.(msg.id);
       if (msg.type === 'mapPress')    onMapPress?.();
     } catch {}
@@ -201,13 +229,10 @@ const LeafletMap = forwardRef(function LeafletMap({
     );
   }, [selectedPin]);
 
-  // Pan to user location when it arrives
   useEffect(() => {
-    if (!userLocation?.latitude || !webRef.current) return;
-    webRef.current.injectJavaScript(
-      `map.setView([${userLocation.latitude},${userLocation.longitude}], 13, {animate:true}); true;`
-    );
-  }, [userLocation?.latitude, userLocation?.longitude]);
+    if (!mapReady || !webRef.current) return;
+    webRef.current.injectJavaScript(`window.setEventPins(${JSON.stringify(pins)}); true;`);
+  }, [mapReady, pinsKey, pins]);
 
   return (
     <View style={[StyleSheet.absoluteFill, style]}>

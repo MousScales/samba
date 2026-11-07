@@ -1,8 +1,10 @@
 import { Platform } from 'react-native';
 
+import { samba } from './theme/samba';
+
 export const colors = {
-  primary: '#40E0FF',
-  background: '#1A1A1A',
+  primary: samba.pink,
+  background: samba.bgDeep,
   surface: '#2A2A2A',
   surfaceLight: '#333333',
   text: '#FFFFFF',

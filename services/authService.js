@@ -8,6 +8,7 @@ const mapProfileToUser = (profile) => {
   if (!profile) return null;
 
   const providerInfo = profile.provider_info || {};
+  const scannerInfo = profile.scanner_info || {};
 
   return {
     id: profile.id,
@@ -21,6 +22,7 @@ const mapProfileToUser = (profile) => {
     role: profile.role || 'attendee',
     currentMode: profile.current_mode || 'attendee',
     providerInfo,
+    scannerInfo,
   };
 };
 
@@ -321,11 +323,54 @@ export const authService = {
     }
   },
 
+  becomeScanner: async (scannerData) => {
+    try {
+      const { data: { user: authUser } } = await supabase.auth.getUser();
+      if (!authUser) {
+        return { success: false, message: 'Not authenticated' };
+      }
+
+      const scannerInfo = {
+        displayName: scannerData.displayName || scannerData.name,
+        status: 'active',
+        onboardedAt: new Date().toISOString(),
+      };
+
+      const { error } = await supabase
+        .from('profiles')
+        .update({
+          scanner_info: scannerInfo,
+          current_mode: 'scanner',
+          updated_at: new Date().toISOString(),
+        })
+        .eq('id', authUser.id);
+
+      if (error) {
+        return { success: false, message: error.message };
+      }
+
+      const user = await fetchProfile(authUser.id);
+      await authService.setUser(user);
+      return { success: true, user };
+    } catch (error) {
+      console.error('Become scanner error:', error);
+      return { success: false, message: error.message || 'Failed to become scanner' };
+    }
+  },
+
   switchMode: async (mode) => {
     try {
       const { data: { user: authUser } } = await supabase.auth.getUser();
       if (!authUser) {
         return { success: false, message: 'Not authenticated' };
+      }
+
+      const profile = await fetchProfile(authUser.id);
+      if (mode === 'provider' && profile?.role !== 'provider') {
+        return { success: false, message: 'You are not registered as an event host' };
+      }
+      if (mode === 'scanner' && profile?.scannerInfo?.status !== 'active') {
+        return { success: false, message: 'You are not registered as a scanner' };
       }
 
       const { error } = await supabase

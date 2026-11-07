@@ -1,12 +1,14 @@
 {
   "name": "sambaevents",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "main": "index.js",
   "scripts": {
     "start": "expo start",
     "android": "expo start --android",
     "ios": "expo start --ios",
-    "web": "expo start --web"
+    "web": "expo start --web",
+    "eas:env:production": "eas env:push production --path .env --force",
+    "eas:env:preview": "eas env:push preview --path .env --force"
   },
   "dependencies": {
     "@expo/vector-icons": "^14.1.0",

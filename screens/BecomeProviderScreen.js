@@ -21,6 +21,7 @@ import { pickImageFromLibrary, pickImageFromCamera } from '../utils/pickImage';
 import { useAuth } from '../context/AuthContext';
 import { useEvents } from '../context/EventsContext';
 import { useLanguage } from '../context/LanguageContext';
+import { getGoogleMapsApiKey } from '../config/env';
 
 const TOTAL_STEPS = 7;
 
@@ -103,7 +104,7 @@ const BecomeProviderScreen = ({ navigation }) => {
     }
     setAddressSearching(true);
     try {
-      const GOOGLE_KEY = process.env.EXPO_PUBLIC_GOOGLE_MAPS_API_KEY;
+      const GOOGLE_KEY = getGoogleMapsApiKey();
       const response = await fetch(
         `https://maps.googleapis.com/maps/api/place/autocomplete/json?input=${encodeURIComponent(text)}&types=address&language=en&key=${GOOGLE_KEY}`
       );

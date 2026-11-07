@@ -83,46 +83,27 @@ const SectionTitle = ({ title, animatedValue }) => {
 const ProviderToggleItem = ({ user, onBecomeProvider, onSwitchMode, animatedValue }) => {
   const { theme } = useTheme();
   const { t } = useLanguage();
-  
+
   const translateY = animatedValue.interpolate({
     inputRange: [0, 1],
     outputRange: [50, 0],
   });
-  
+
   const opacity = animatedValue.interpolate({
     inputRange: [0, 0.3, 1],
     outputRange: [0, 0.5, 1],
   });
 
-  // Don't render anything if user data is not loaded yet
-  if (!user) {
-    return null;
-  }
+  if (!user) return null;
 
   const isProvider = user.role === 'provider';
   const currentMode = user.currentMode || 'attendee';
-  
-  console.log('ProviderToggleItem - User role:', user.role, 'isProvider:', isProvider);
-  
+
   return (
-    <Animated.View
-      style={{
-        opacity,
-        transform: [{ translateY }],
-      }}
-    >
+    <Animated.View style={{ opacity, transform: [{ translateY }] }}>
       {!isProvider ? (
-        // Show "Become a Provider" button if not a provider
-        <TouchableOpacity 
-          style={[
-            styles.settingItem, 
-            { 
-              backgroundColor: 'rgba(42, 42, 42, 0.8)',
-              borderRadius: 16,
-              marginBottom: 12,
-              marginHorizontal: 16,
-            }
-          ]} 
+        <TouchableOpacity
+          style={[styles.settingItem, styles.settingCard]}
           onPress={onBecomeProvider}
           activeOpacity={0.7}
         >
@@ -136,22 +117,13 @@ const ProviderToggleItem = ({ user, onBecomeProvider, onSwitchMode, animatedValu
           <Icon name="chevron-right" type="feather" size={20} color={theme.colors.textSecondary} />
         </TouchableOpacity>
       ) : (
-        // Show mode toggle if user is a provider
-        <View style={[
-          styles.settingItem, 
-          { 
-            backgroundColor: 'rgba(42, 42, 42, 0.8)',
-            borderRadius: 16,
-            marginBottom: 12,
-            marginHorizontal: 16,
-          }
-        ]}>
+        <View style={[styles.settingItem, styles.settingCard]}>
           <View style={[styles.settingIcon, { backgroundColor: 'rgba(64, 64, 64, 0.3)' }]}>
-            <Icon 
-              name={currentMode === 'provider' ? 'briefcase' : 'user'} 
-              type="feather" 
-              size={22} 
-              color={theme.colors.textSecondary} 
+            <Icon
+              name={currentMode === 'provider' ? 'briefcase' : 'user'}
+              type="feather"
+              size={22}
+              color={theme.colors.textSecondary}
             />
           </View>
           <View style={styles.settingContent}>
@@ -167,6 +139,72 @@ const ProviderToggleItem = ({ user, onBecomeProvider, onSwitchMode, animatedValu
             onValueChange={(value) => onSwitchMode(value ? 'provider' : 'attendee')}
             trackColor={{ false: 'rgba(255,255,255,0.2)', true: 'rgba(255,255,255,0.4)' }}
             thumbColor={currentMode === 'provider' ? '#FFFFFF' : '#f4f3f4'}
+          />
+        </View>
+      )}
+    </Animated.View>
+  );
+};
+
+const ScannerToggleItem = ({ user, onBecomeScanner, onSwitchMode, animatedValue }) => {
+  const { theme } = useTheme();
+  const { t } = useLanguage();
+
+  const translateY = animatedValue.interpolate({
+    inputRange: [0, 1],
+    outputRange: [50, 0],
+  });
+
+  const opacity = animatedValue.interpolate({
+    inputRange: [0, 0.3, 1],
+    outputRange: [0, 0.5, 1],
+  });
+
+  if (!user) return null;
+
+  const isScanner = user.scannerInfo?.status === 'active';
+  const currentMode = user.currentMode || 'attendee';
+
+  return (
+    <Animated.View style={{ opacity, transform: [{ translateY }] }}>
+      {!isScanner ? (
+        <TouchableOpacity
+          style={[styles.settingItem, styles.settingCard]}
+          onPress={onBecomeScanner}
+          activeOpacity={0.7}
+        >
+          <View style={[styles.settingIcon, { backgroundColor: 'rgba(64, 64, 64, 0.3)' }]}>
+            <Icon name="maximize" type="feather" size={22} color={theme.colors.textSecondary} />
+          </View>
+          <View style={styles.settingContent}>
+            <Text style={[styles.settingTitle, { color: theme.colors.text }]}>{t('settings.scanner.become')}</Text>
+            <Text style={[styles.settingSubtitle, { color: theme.colors.textSecondary }]}>{t('settings.scanner.becomeSubtitle')}</Text>
+          </View>
+          <Icon name="chevron-right" type="feather" size={20} color={theme.colors.textSecondary} />
+        </TouchableOpacity>
+      ) : (
+        <View style={[styles.settingItem, styles.settingCard]}>
+          <View style={[styles.settingIcon, { backgroundColor: 'rgba(64, 64, 64, 0.3)' }]}>
+            <Icon
+              name={currentMode === 'scanner' ? 'maximize' : 'user'}
+              type="feather"
+              size={22}
+              color={theme.colors.textSecondary}
+            />
+          </View>
+          <View style={styles.settingContent}>
+            <Text style={[styles.settingTitle, { color: theme.colors.text }]}>
+              {currentMode === 'scanner' ? t('settings.scanner.modeScanner') : t('settings.scanner.modeAttendee')}
+            </Text>
+            <Text style={[styles.settingSubtitle, { color: theme.colors.textSecondary }]}>
+              {currentMode === 'scanner' ? t('settings.scanner.switchToAttendee') : t('settings.scanner.switchToScanner')}
+            </Text>
+          </View>
+          <Switch
+            value={currentMode === 'scanner'}
+            onValueChange={(value) => onSwitchMode(value ? 'scanner' : 'attendee')}
+            trackColor={{ false: 'rgba(255,255,255,0.2)', true: 'rgba(255,255,255,0.4)' }}
+            thumbColor={currentMode === 'scanner' ? '#FFFFFF' : '#f4f3f4'}
           />
         </View>
       )}
@@ -210,11 +248,18 @@ const SettingsScreen = ({ navigation }) => {
     navigation.navigate('BecomeProvider');
   };
 
+  const handleBecomeScanner = () => {
+    navigation.navigate('BecomeScanner');
+  };
+
   const handleSwitchMode = async (mode) => {
     try {
       const result = await switchMode(mode);
       if (result.success) {
         Alert.alert(t('settings.alert.modeChanged.title'), t('settings.alert.modeChanged.message', { mode }));
+        if (mode === 'scanner') {
+          navigation.navigate('ScannerEvents');
+        }
       } else {
         Alert.alert(t('common.error'), result.message);
       }
@@ -252,7 +297,7 @@ const SettingsScreen = ({ navigation }) => {
               await logout();
               navigation.reset({
                 index: 0,
-                routes: [{ name: 'Login' }],
+                routes: [{ name: 'Home' }],
               });
             } catch (error) {
               Alert.alert(t('common.error'), t('settings.error.logoutFailed'));
@@ -284,6 +329,13 @@ const SettingsScreen = ({ navigation }) => {
           <ProviderToggleItem
             user={user}
             onBecomeProvider={handleBecomeProvider}
+            onSwitchMode={handleSwitchMode}
+            animatedValue={accountAnimation}
+          />
+
+          <ScannerToggleItem
+            user={user}
+            onBecomeScanner={handleBecomeScanner}
             onSwitchMode={handleSwitchMode}
             animatedValue={accountAnimation}
           />
@@ -425,6 +477,12 @@ const styles = StyleSheet.create({
         elevation: 2,
       },
     }),
+  },
+  settingCard: {
+    backgroundColor: 'rgba(42, 42, 42, 0.8)',
+    borderRadius: 16,
+    marginBottom: 12,
+    marginHorizontal: 16,
   },
   settingIcon: {
     width: 44,

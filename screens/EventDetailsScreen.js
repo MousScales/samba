@@ -1,14 +1,19 @@
-import React, { useState, useRef, useCallback, useLayoutEffect } from 'react';
+import React, { useState, useRef, useCallback, useLayoutEffect, useEffect } from 'react';
 import { useFocusEffect } from '@react-navigation/native';
 import {
   StyleSheet, View, ScrollView, TouchableOpacity,
-  Image, Dimensions, Platform, StatusBar, Animated, Share, Linking,
+  Image, Dimensions, Platform, StatusBar, Animated, Share, Linking, ActivityIndicator,
 } from 'react-native';
 import { Text, Icon } from '@rneui/themed';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { LinearGradient } from 'expo-linear-gradient';
 import { formatCount } from '../utils/formatNumbers';
+import { buildEventShareMessage, buildEventShareUrl } from '../utils/shareLinks';
+import { syncEventForSharing, fetchEventById } from '../services/eventsService';
+import { useEvents } from '../context/EventsContext';
 import { useLanguage } from '../context/LanguageContext';
+import { useAuth } from '../context/AuthContext';
+import { samba } from '../theme/samba';
 
 const { width, height } = Dimensions.get('window');
 const HERO_H = height * 0.46;
@@ -16,10 +21,43 @@ const HERO_H = height * 0.46;
 const EventDetailsScreen = ({ navigation, route }) => {
   const insets = useSafeAreaInsets();
   const { t, locale } = useLanguage();
-  const { event } = route.params;
+  const { user } = useAuth();
+  const { getEventById } = useEvents();
+  const { event: paramEvent, eventId: paramEventId } = route.params || {};
 
-  const ticketTypes = event.tickets || event.ticketTypes || [];
-  const coverImage  = event.coverImage || event.image || event.flyers?.[0] || null;
+  const [event, setEvent] = useState(paramEvent ?? null);
+  const [loading, setLoading] = useState(!paramEvent && !!paramEventId);
+
+  useEffect(() => {
+    if (paramEvent) {
+      setEvent(paramEvent);
+      setLoading(false);
+      return undefined;
+    }
+
+    const id = paramEventId;
+    if (!id) {
+      setLoading(false);
+      return undefined;
+    }
+
+    const cached = getEventById(id);
+    if (cached) {
+      setEvent(cached);
+      setLoading(false);
+      return undefined;
+    }
+
+    let cancelled = false;
+    setLoading(true);
+    fetchEventById(id).then((remote) => {
+      if (!cancelled) {
+        setEvent(remote);
+        setLoading(false);
+      }
+    });
+    return () => { cancelled = true; };
+  }, [paramEvent, paramEventId, getEventById]);
 
   const [ticketCounts,   setTicketCounts]   = useState({});
   const [showTicketModal, setShowTicketModal] = useState(false);
@@ -34,6 +72,30 @@ const EventDetailsScreen = ({ navigation, route }) => {
   useLayoutEffect(() => {
     navigation.setOptions({ headerShown: false });
   }, [navigation]);
+
+  if (loading) {
+    return (
+      <View style={[styles.container, styles.centered]}>
+        <StatusBar barStyle="light-content" />
+        <ActivityIndicator size="large" color={samba.pink} />
+      </View>
+    );
+  }
+
+  if (!event) {
+    return (
+      <View style={[styles.container, styles.centered]}>
+        <StatusBar barStyle="light-content" />
+        <Text style={styles.notFoundTitle}>{t('explore.empty.title')}</Text>
+        <TouchableOpacity style={styles.notFoundBtn} onPress={() => navigation.goBack()} activeOpacity={0.8}>
+          <Text style={styles.notFoundBtnText}>{t('eventDetails.backLabel')}</Text>
+        </TouchableOpacity>
+      </View>
+    );
+  }
+
+  const ticketTypes = event.tickets || event.ticketTypes || [];
+  const coverImage  = event.coverImage || event.image || event.flyers?.[0] || null;
 
   // ── Helpers ─────────────────────────────────────────────────────────────────
   const spotsLeft = (() => {
@@ -111,7 +173,16 @@ const EventDetailsScreen = ({ navigation, route }) => {
 
   const handleShare = async () => {
     try {
-      await Share.share({ message: t('eventDetails.share.message', { title: event.title }) });
+      await syncEventForSharing(event, user?.id);
+      const url = buildEventShareUrl(event.id);
+      const message = buildEventShareMessage({
+        event, t, locale, includeUrl: Platform.OS !== 'ios',
+      });
+      await Share.share(
+        Platform.OS === 'ios'
+          ? { message, url, title: event.title }
+          : { message, title: event.title },
+      );
     } catch {}
   };
 
@@ -221,16 +292,14 @@ const EventDetailsScreen = ({ navigation, route }) => {
           </View>
         </View>
 
-        {/* ── Attendance strip ── */}
+        {/* ── Spots left ── */}
         <View style={styles.attendStrip}>
           <Text style={styles.attendText}>
-            {t('eventDetails.attending', { count: formatCount(event.bookedSpots || 0) })}
-          </Text>
-          <View style={styles.attendDot} />
-          <Text style={styles.attendText}>
-            {t('eventDetails.spotsLeft', {
-              count: spotsLeft === t('common.unlimited') ? t('common.unlimited') : formatCount(spotsLeft),
-            })}
+            {spotsLeft === 0
+              ? t('home.spots.soldOut')
+              : t('eventDetails.spotsLeft', {
+                  count: spotsLeft === t('common.unlimited') ? t('common.unlimited') : formatCount(spotsLeft),
+                })}
           </Text>
         </View>
 
@@ -383,6 +452,10 @@ const EventDetailsScreen = ({ navigation, route }) => {
 
 const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: '#0a0a0a' },
+  centered: { justifyContent: 'center', alignItems: 'center', padding: 24 },
+  notFoundTitle: { fontSize: 16, fontWeight: '600', color: 'rgba(255,255,255,0.6)', marginBottom: 16 },
+  notFoundBtn: { paddingHorizontal: 20, paddingVertical: 10, borderRadius: 10, backgroundColor: 'rgba(255,255,255,0.1)' },
+  notFoundBtnText: { fontSize: 14, fontWeight: '600', color: '#FFFFFF' },
 
   // Nav buttons floating over hero
   floatNav: {

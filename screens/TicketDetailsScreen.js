@@ -1,21 +1,42 @@
-import React, { useRef, useEffect, useState } from 'react';
-import { StyleSheet, View, ScrollView, TouchableOpacity, Image, Platform, Dimensions, Animated, StatusBar, FlatList } from 'react-native';
+import React, { useRef, useEffect, useState, useMemo, useCallback } from 'react';
+import { StyleSheet, View, ScrollView, TouchableOpacity, Image, Platform, Dimensions, Animated, StatusBar, FlatList, Share, Alert, ActivityIndicator } from 'react-native';
 import { Text, useTheme, Icon, Button } from '@rneui/themed';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import QRCode from 'react-native-qrcode-svg';
 import { LinearGradient } from 'expo-linear-gradient';
+import { useEvents } from '../context/EventsContext';
+import { useAuth } from '../context/AuthContext';
+import { useLanguage } from '../context/LanguageContext';
+import { buildTicketShareMessage, buildTicketShareUrl } from '../utils/shareLinks';
+import { samba } from '../theme/samba';
 
 const { width } = Dimensions.get('window');
 
 const TicketDetailsScreen = ({ route, navigation }) => {
   const { theme } = useTheme();
+  const { t } = useLanguage();
+  const { isAuthenticated } = useAuth();
+  const { shareTicket, getTicketsByOrderId, getOrderShareCompanions } = useEvents();
   const { ticket } = route.params;
   const [activeTicketIndex, setActiveTicketIndex] = useState(0);
+  const [sharing, setSharing] = useState(false);
+  const [companions, setCompanions] = useState([]);
   const ticketScrollRef = useRef(null);
-  
-  // Simple single ticket - no grouping, no multiple QR codes
-  const tickets = [ticket]; // Always just one ticket
-  const ticketQuantity = 1; // Always 1
+
+  const orderTickets = useMemo(() => {
+    if (!ticket?.orderId) return [ticket];
+    const siblings = getTicketsByOrderId(ticket.orderId).filter((t) => t.status === 'upcoming');
+    return siblings.length > 0 ? siblings : [ticket];
+  }, [ticket, getTicketsByOrderId]);
+
+  const activeTicket = orderTickets[activeTicketIndex] || ticket;
+  const ticketQuantity = orderTickets.length;
+  const canShare = (
+    isAuthenticated
+    && activeTicket.source === 'supabase'
+    && activeTicket.status === 'upcoming'
+    && ticketQuantity > 1
+  );
   
   // Animation values
   const fadeAnim = useRef(new Animated.Value(0)).current;
@@ -47,7 +68,33 @@ const TicketDetailsScreen = ({ route, navigation }) => {
     navigation.setOptions({
       headerShown: false,
     });
-  }, []);
+
+    if (ticket?.orderId && isAuthenticated) {
+      getOrderShareCompanions(ticket.orderId).then(setCompanions);
+    }
+  }, [ticket?.orderId, isAuthenticated]);
+
+  const handleShare = useCallback(async () => {
+    if (!canShare) return;
+    setSharing(true);
+    try {
+      const { shareToken } = await shareTicket(activeTicket.id);
+      const message = buildTicketShareMessage({
+        eventTitle: activeTicket.eventTitle,
+        t,
+        shareToken,
+        includeUrl: Platform.OS !== 'ios',
+      });
+      await Share.share({
+        message,
+        ...(Platform.OS === 'ios' ? { url: buildTicketShareUrl(shareToken) } : {}),
+      });
+    } catch (e) {
+      Alert.alert(t('common.error'), e.message || t('myTickets.share.alertFailed'));
+    } finally {
+      setSharing(false);
+    }
+  }, [activeTicket, canShare, shareTicket, t]);
 
   const handleTicketScroll = (event) => {
     const contentOffsetX = event.nativeEvent.contentOffset.x;
@@ -60,7 +107,7 @@ const TicketDetailsScreen = ({ route, navigation }) => {
     console.log('Adding ticket to wallet:', ticket);
   };
 
-  const renderTicket = ({ item, index }) => (
+  const renderTicket = ({ item }) => (
     <View style={styles.ticketSlide}>
       <View style={styles.ticketOuterContainer}>
           <LinearGradient
@@ -74,7 +121,7 @@ const TicketDetailsScreen = ({ route, navigation }) => {
             <View style={styles.ticketQrContainer}>
               <View style={styles.qrInner}>
             <QRCode
-                  value={ticket.qrCode || ticket.id || "TICKET12345"}
+                  value={item.qrCode || item.id || "TICKET12345"}
                   size={180}
               backgroundColor="white"
               color="black"
@@ -92,12 +139,12 @@ const TicketDetailsScreen = ({ route, navigation }) => {
             {/* Ticket stub - small info section */}
             <View style={styles.ticketStub}>
               <Text style={styles.ticketEventName} numberOfLines={1}>
-                {ticket.eventTitle || item.eventTitle || "Summer Music Festival"}
+                {item.eventTitle || "Summer Music Festival"}
               </Text>
               <Text style={styles.ticketDate}>
-                {ticket.eventDate ? (() => {
+                {item.eventDate ? (() => {
                   try {
-                    const date = new Date(ticket.eventDate);
+                    const date = new Date(item.eventDate);
                     return isNaN(date.getTime()) ? "Date TBD" : date.toLocaleDateString('en-US', { year: 'numeric', month: 'short', day: 'numeric' });
                   } catch {
                     return "Date TBD";
@@ -105,10 +152,10 @@ const TicketDetailsScreen = ({ route, navigation }) => {
                 })() : "Jun 25, 2025"}
               </Text>
               <Text style={styles.ticketType}>
-                {ticket.ticketType || "General Admission"}
+                {item.ticketType || "General Admission"}
               </Text>
               <Text style={styles.ticketNumberText}>
-                #{ticket.ticketNumber || (ticket.id ? ticket.id.substring(0, 8).toUpperCase() : "N/A")}
+                #{item.ticketNumber || (item.id ? item.id.substring(0, 8).toUpperCase() : "N/A")}
               </Text>
             </View>
           </View>
@@ -162,15 +209,68 @@ const TicketDetailsScreen = ({ route, navigation }) => {
                   { transform: [{ scale: qrScaleAnim }] }
                 ]}
               >
-                {renderTicket({ item: ticket, index: 0 })}
-                
-
+                {ticketQuantity > 1 ? (
+                  <>
+                    <FlatList
+                      ref={ticketScrollRef}
+                      data={orderTickets}
+                      renderItem={renderTicket}
+                      keyExtractor={(item) => item.id}
+                      horizontal
+                      pagingEnabled
+                      showsHorizontalScrollIndicator={false}
+                      onScroll={handleTicketScroll}
+                      scrollEventThrottle={16}
+                      style={styles.ticketCarousel}
+                    />
+                    <View style={styles.paginationContainer}>
+                      {orderTickets.map((_, i) => (
+                        <View
+                          key={i}
+                          style={[
+                            styles.paginationDot,
+                            i === activeTicketIndex && styles.paginationDotActive,
+                          ]}
+                        />
+                      ))}
+                    </View>
+                    <Text style={styles.ticketCounter}>
+                      {activeTicketIndex + 1} / {ticketQuantity}
+                    </Text>
+                  </>
+                ) : (
+                  renderTicket({ item: activeTicket })
+                )}
               </Animated.View>
 
               {/* Event Title */}
               <Text style={styles.eventTitle}>
-                {ticket.eventTitle || "Summer Music Festival"}
+                {activeTicket.eventTitle || "Summer Music Festival"}
               </Text>
+
+              {companions.length > 1 && (
+                <View style={styles.companionsSection}>
+                  <Text style={styles.companionsTitle}>{t('myTickets.sharedSection.goingWith')}</Text>
+                  <View style={styles.companionsAvatars}>
+                    {companions.map((c) => (
+                      <View key={c.userId} style={styles.companionChip}>
+                        {c.avatar ? (
+                          <Image source={{ uri: c.avatar }} style={styles.companionChipAvatar} />
+                        ) : (
+                          <View style={[styles.companionChipAvatar, styles.companionChipFallback]}>
+                            <Text style={styles.companionChipInitial}>
+                              {(c.name || '?').charAt(0).toUpperCase()}
+                            </Text>
+                          </View>
+                        )}
+                        <Text style={styles.companionChipName} numberOfLines={1}>
+                          {c.role === 'self' ? t('common.you') : c.name}
+                        </Text>
+                      </View>
+                    ))}
+                  </View>
+                </View>
+              )}
 
               {/* Event Details Card */}
               <View style={styles.detailsCard}>
@@ -186,7 +286,7 @@ const TicketDetailsScreen = ({ route, navigation }) => {
                   </View>
             <View>
                     <Text style={styles.detailText}>
-                      {ticket.eventDate ? (() => {
+                      {activeTicket.eventDate ? (() => {
                         try {
                           const date = new Date(ticket.eventDate);
                           return isNaN(date.getTime()) ? "Date TBD" : date.toLocaleDateString('en-US', { 
@@ -201,7 +301,7 @@ const TicketDetailsScreen = ({ route, navigation }) => {
                       })() : "Sunday, May 19, 2024"}
               </Text>
                     <Text style={styles.detailSubtext}>
-                      {ticket.eventTime ? (() => {
+                      {activeTicket.eventTime ? (() => {
                         try {
                           const time = new Date(ticket.eventTime);
                           return isNaN(time.getTime()) ? "Time TBD" : time.toLocaleTimeString('en-US', { 
@@ -230,7 +330,7 @@ const TicketDetailsScreen = ({ route, navigation }) => {
             <View style={styles.locationContainer}>
                     <Text style={styles.detailText} numberOfLines={1}>
                       {(() => {
-                        const location = ticket.eventLocation || "Central Park, NYC";
+                        const location = activeTicket.eventLocation || "Central Park, NYC";
                         // Truncate long addresses to fit in the box
                         if (location.length > 35) {
                           return location.substring(0, 32) + "...";
@@ -248,7 +348,7 @@ const TicketDetailsScreen = ({ route, navigation }) => {
               Ticket Type
             </Text>
                     <Text style={styles.sectionValue}>
-                      {ticket.ticketType || "Main"}
+                      {activeTicket.ticketType || "Main"}
             </Text>
           </View>
 
@@ -259,48 +359,35 @@ const TicketDetailsScreen = ({ route, navigation }) => {
               Ticket Number
             </Text>
                     <Text style={styles.sectionValue}>
-                      #{ticket.ticketNumber || (ticket.id ? ticket.id.substring(0, 12).toUpperCase() : "N/A")}
+                      #{activeTicket.ticketNumber || (activeTicket.id ? activeTicket.id.substring(0, 12).toUpperCase() : "N/A")}
             </Text>
                   </View>
                 </View>
           </View>
 
-          {/* View Attendees Button */}
-          <TouchableOpacity
-                style={styles.attendeesButton}
-            onPress={() => navigation.navigate('Attendees', { eventId: ticket.eventId })}
-              >
-                <LinearGradient
-                  colors={['rgba(255,255,255,0.1)', 'rgba(255,255,255,0.05)']}
-                  start={{ x: 0, y: 0 }}
-                  end={{ x: 1, y: 1 }}
-                  style={styles.attendeesGradient}
-          >
-            <View style={styles.attendeesContent}>
-              <View>
-                      <Text style={styles.attendeesTitle}>
-                        View Guestlist
-                </Text>
-                      <Text style={styles.attendeesSubtitle}>
-                  See who else is going
-                </Text>
-              </View>
-              <Icon
-                name="chevron-right"
-                type="feather"
-                      size={22}
-                      color="rgba(255,255,255,0.6)"
-              />
-            </View>
-                </LinearGradient>
-          </TouchableOpacity>
             </Animated.View>
       </ScrollView>
 
-      {/* Bottom Action Button */}
+      {/* Bottom Action Buttons */}
           <View style={styles.bottomButtons}>
+        {canShare && (
+          <TouchableOpacity
+            style={[styles.walletButton, styles.shareActionButton]}
+            onPress={handleShare}
+            disabled={sharing}
+          >
+            {sharing ? (
+              <ActivityIndicator color="#fff" size="small" />
+            ) : (
+              <>
+                <Icon name="share-2" type="feather" size={20} color="#fff" style={styles.buttonIcon} />
+                <Text style={styles.walletButtonText}>{t('myTickets.share.button')}</Text>
+              </>
+            )}
+          </TouchableOpacity>
+        )}
         <TouchableOpacity
-              style={[styles.walletButton, styles.singleButton]}
+              style={[styles.walletButton, !canShare && styles.singleButton, canShare && styles.walletSecondary]}
           onPress={handleAddToWallet}
         >
           <Icon
@@ -552,6 +639,13 @@ const styles = StyleSheet.create({
   singleButton: {
     marginRight: 0,
   },
+  shareActionButton: {
+    backgroundColor: samba.green,
+  },
+  walletSecondary: {
+    flex: 0.85,
+    marginRight: 0,
+  },
   buttonIcon: {
     marginRight: 8,
   },
@@ -599,6 +693,57 @@ const styles = StyleSheet.create({
     marginTop: 1,
     fontWeight: '400',
     textAlign: 'center',
+  },
+  companionsSection: {
+    width: '100%',
+    marginBottom: 20,
+    padding: 16,
+    backgroundColor: 'rgba(255,255,255,0.06)',
+    borderRadius: 16,
+  },
+  companionsTitle: {
+    fontSize: 13,
+    fontWeight: '600',
+    color: 'rgba(255,255,255,0.5)',
+    marginBottom: 12,
+    textTransform: 'uppercase',
+    letterSpacing: 0.5,
+  },
+  companionsAvatars: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 10,
+  },
+  companionChip: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: 'rgba(255,255,255,0.08)',
+    borderRadius: 20,
+    paddingRight: 12,
+    paddingLeft: 4,
+    paddingVertical: 4,
+  },
+  companionChipAvatar: {
+    width: 28,
+    height: 28,
+    borderRadius: 14,
+    marginRight: 8,
+  },
+  companionChipFallback: {
+    backgroundColor: samba.pinkFaint,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  companionChipInitial: {
+    fontSize: 12,
+    fontWeight: '700',
+    color: samba.pink,
+  },
+  companionChipName: {
+    fontSize: 13,
+    fontWeight: '600',
+    color: '#fff',
+    maxWidth: 100,
   },
   ticketTypesContainer: {
     width: '100%',

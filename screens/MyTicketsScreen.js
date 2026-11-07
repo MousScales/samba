@@ -1,18 +1,21 @@
-import React, { useState, useEffect, useRef } from 'react';
-import { StyleSheet, View, ScrollView, TouchableOpacity, Image, Dimensions, Platform, Animated, StatusBar } from 'react-native';
+import React, { useState, useEffect, useRef, useCallback } from 'react';
+import { StyleSheet, View, ScrollView, TouchableOpacity, Image, Dimensions, Platform, Animated, StatusBar, Share, Alert, ActivityIndicator } from 'react-native';
 import { Text, useTheme, Icon } from '@rneui/themed';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { LinearGradient } from 'expo-linear-gradient';
 import { BlurView } from 'expo-blur';
 import CustomNavBar from '../components/CustomNavBar';
+import SambaBackground from '../components/SambaBackground';
+import { samba } from '../theme/samba';
 import { useEvents } from '../context/EventsContext';
-import { formatCount } from '../utils/formatNumbers';
+import { useAuth } from '../context/AuthContext';
+import { buildTicketShareMessage, buildTicketShareUrl } from '../utils/shareLinks';
 import { useLanguage } from '../context/LanguageContext';
 
 const { width, height } = Dimensions.get('window');
 
 // Enhanced Animated Ticket Card Component
-const TicketCard = ({ ticket, onPress, index, scrollY, isPast }) => {
+const TicketCard = ({ ticket, onPress, onShare, canShare, index, scrollY, isPast }) => {
   const { theme } = useTheme();
   const { t, locale } = useLanguage();
   const fadeAnim = useRef(new Animated.Value(0)).current;
@@ -138,22 +141,6 @@ const TicketCard = ({ ticket, onPress, index, scrollY, isPast }) => {
                 </Text>
               </BlurView>
             </View>
-
-            {/* Attendee Count Badge */}
-            <View style={styles.attendeeCountBadge}>
-              <BlurView intensity={60} style={styles.attendeeCountBlur}>
-                <Icon 
-                  name="users" 
-                  type="feather" 
-                  size={14} 
-                  color="#FFFFFF" 
-                  style={{ marginRight: 4 }} 
-                />
-                <Text style={styles.attendeeCountText}>
-                  {formatCount(ticket.attendeeCount || 0)}
-                </Text>
-              </BlurView>
-            </View>
           </View>
 
           {/* Enhanced Content Section */}
@@ -165,7 +152,7 @@ const TicketCard = ({ ticket, onPress, index, scrollY, isPast }) => {
               {!isPast && (
                 <View style={styles.chevronContainer}>
                   <LinearGradient
-                    colors={['#FFD700', '#FFA500']}
+                    colors={samba.pinkGradient}
                     style={styles.chevronBackground}
                   >
                     <Icon
@@ -184,14 +171,14 @@ const TicketCard = ({ ticket, onPress, index, scrollY, isPast }) => {
               <View style={styles.detailItem}>
                 <View style={styles.detailIconContainer}>
                   <LinearGradient
-                    colors={['rgba(255, 215, 0, 0.2)', 'rgba(255, 215, 0, 0.1)']}
+                    colors={[samba.pinkMuted, samba.pinkFaint]}
                     style={styles.detailIconBG}
                   >
                     <Icon
                       name="calendar"
                       type="feather"
                       size={14}
-                      color="#FFD700"
+                      color={samba.pink}
                     />
                   </LinearGradient>
                 </View>
@@ -254,6 +241,15 @@ const TicketCard = ({ ticket, onPress, index, scrollY, isPast }) => {
                 </View>
               </View>
             </View>
+
+            {!isPast && canShare && onShare && (
+              <TouchableOpacity style={styles.shareButton} onPress={onShare} activeOpacity={0.85}>
+                <LinearGradient colors={samba.greenGradient} style={styles.shareButtonGradient}>
+                  <Icon name="share-2" type="feather" size={16} color="#FFF" />
+                  <Text style={styles.shareButtonText}>{t('myTickets.share.button')}</Text>
+                </LinearGradient>
+              </TouchableOpacity>
+            )}
           </View>
         </View>
 
@@ -339,7 +335,7 @@ const EmptyState = ({ activeTab, navigation }) => {
           ]}
         >
           <LinearGradient
-            colors={activeTab === 'upcoming' ? ['#FFD700', '#FFA500'] : ['#FF6B6B', '#FF8E53']}
+            colors={activeTab === 'upcoming' ? samba.pinkGradient : ['#FF6B6B', '#FF8E53']}
             style={styles.emptyIconBackground}
           >
             <Icon
@@ -371,7 +367,7 @@ const EmptyState = ({ activeTab, navigation }) => {
 
         <View style={styles.emptyStateDivider}>
           <LinearGradient
-            colors={['transparent', '#FFD700', 'transparent']}
+            colors={['transparent', samba.pink, 'transparent']}
             start={{ x: 0, y: 0 }}
             end={{ x: 1, y: 0 }}
             style={styles.dividerGradient}
@@ -391,7 +387,7 @@ const EmptyState = ({ activeTab, navigation }) => {
             activeOpacity={0.8}
           >
             <LinearGradient
-              colors={['#FFD700', '#FFA500']}
+              colors={samba.pinkGradient}
               style={styles.exploreButtonGradient}
             >
               <Icon
@@ -411,7 +407,7 @@ const EmptyState = ({ activeTab, navigation }) => {
           {[
             { icon: 'calendar', text: t('myTickets.empty.features.browse'), color: '#4ECDC4' },
             { icon: 'map-pin', text: t('myTickets.empty.features.findLocal'), color: '#FF6B6B' },
-            { icon: 'heart', text: t('myTickets.empty.features.saveFavorites'), color: '#FFD700' }
+            { icon: 'heart', text: t('myTickets.empty.features.saveFavorites'), color: samba.green }
           ].map((feature, index) => (
             <View key={index} style={styles.featureItem}>
               <LinearGradient
@@ -434,13 +430,102 @@ const EmptyState = ({ activeTab, navigation }) => {
   );
 };
 
+const CompanionAvatars = ({ companions }) => {
+  const { t } = useLanguage();
+  const others = (companions || []).filter((c) => c.role !== 'self');
+
+  if (!companions?.length) return null;
+
+  return (
+    <View style={styles.companionsRow}>
+      <Text style={styles.companionsLabel}>{t('myTickets.sharedSection.goingWith')}</Text>
+      <View style={styles.avatarStack}>
+        {companions.slice(0, 5).map((c, i) => (
+          <View key={c.userId || i} style={[styles.companionAvatarWrap, { marginLeft: i > 0 ? -10 : 0 }]}>
+            {c.avatar ? (
+              <Image source={{ uri: c.avatar }} style={styles.companionAvatar} />
+            ) : (
+              <View style={[styles.companionAvatar, styles.companionAvatarFallback]}>
+                <Text style={styles.companionInitial}>
+                  {(c.name || '?').charAt(0).toUpperCase()}
+                </Text>
+              </View>
+            )}
+          </View>
+        ))}
+        {others.length === 0 && companions.length === 1 && (
+          <Text style={styles.shareHintText}>{t('myTickets.sharedSection.shareHint')}</Text>
+        )}
+      </View>
+    </View>
+  );
+};
+
+const SharedTicketsSection = ({ groups, onTicketPress, onShareTicket }) => {
+  const { t } = useLanguage();
+  if (!groups?.length) return null;
+
+  return (
+    <View style={styles.sharedSection}>
+      <Text style={styles.sharedSectionTitle}>{t('myTickets.sharedSection.title')}</Text>
+      {groups.map((group) => (
+        <View key={group.orderId} style={styles.sharedGroupCard}>
+          <Image
+            source={{ uri: group.eventImage }}
+            style={styles.sharedGroupImage}
+            resizeMode="cover"
+          />
+          <LinearGradient
+            colors={['transparent', 'rgba(0,0,0,0.85)']}
+            style={styles.sharedGroupOverlay}
+          />
+          <View style={styles.sharedGroupContent}>
+            <Text style={styles.sharedGroupTitle} numberOfLines={2}>{group.eventTitle}</Text>
+            <Text style={styles.sharedGroupSub}>
+              {t('myTickets.sharedSection.subtitle', { count: group.tickets.length })}
+            </Text>
+            <CompanionAvatars companions={group.companions} />
+            <View style={styles.sharedTicketActions}>
+              {group.tickets.map((ticket) => (
+                <View key={ticket.id} style={styles.sharedTicketRow}>
+                  <TouchableOpacity
+                    style={styles.sharedTicketTap}
+                    onPress={() => onTicketPress(ticket)}
+                    activeOpacity={0.85}
+                  >
+                    <Text style={styles.sharedTicketType} numberOfLines={1}>
+                      {ticket.ticketType}
+                    </Text>
+                    <Icon name="chevron-right" type="feather" size={16} color={samba.pink} />
+                  </TouchableOpacity>
+                  {group.canShare && (
+                    <TouchableOpacity
+                      style={styles.sharedShareIconBtn}
+                      onPress={() => onShareTicket(ticket)}
+                      activeOpacity={0.85}
+                    >
+                      <Icon name="share-2" type="feather" size={16} color="#FFF" />
+                    </TouchableOpacity>
+                  )}
+                </View>
+              ))}
+            </View>
+          </View>
+        </View>
+      ))}
+    </View>
+  );
+};
+
 const MyTicketsScreen = ({ navigation, route }) => {
   const { theme } = useTheme();
   const { t } = useLanguage();
-  const { getUserTickets, events, getUserTickets: getAllUserTickets } = useEvents();
+  const { getUserTickets, shareTicket, getOrderShareCompanions } = useEvents();
+  const { isAuthenticated, user } = useAuth();
   const [activeTab, setActiveTab] = useState(route?.params?.tab || 'all');
   const [upcomingTickets, setUpcomingTickets] = useState([]);
   const [pastTickets, setPastTickets] = useState([]);
+  const [sharedGroups, setSharedGroups] = useState([]);
   const [loading, setLoading] = useState(true);
   const scrollY = useRef(new Animated.Value(0)).current;
   const headerOpacity = useRef(new Animated.Value(1)).current;
@@ -449,62 +534,89 @@ const MyTicketsScreen = ({ navigation, route }) => {
     ? [...upcomingTickets, ...pastTickets]
     : activeTab === 'upcoming' ? upcomingTickets : pastTickets;
 
-  // Helper function to get attendee count for an event
-  const getAttendeeCountForEvent = async (eventId) => {
+  const sharedTicketIds = new Set(
+    sharedGroups.flatMap((g) => g.tickets.map((t) => t.id)),
+  );
+
+  const displayTickets = activeTab === 'past'
+    ? currentTickets
+    : currentTickets.filter((t) => !sharedTicketIds.has(t.id));
+
+  const orderTicketCounts = upcomingTickets.reduce((acc, t) => {
+    if (t.orderId) acc[t.orderId] = (acc[t.orderId] || 0) + 1;
+    return acc;
+  }, {});
+
+  const canShareTicket = (ticket) => (
+    isAuthenticated
+    && ticket.source === 'supabase'
+    && ticket.status === 'upcoming'
+    && ticket.orderId
+    && orderTicketCounts[ticket.orderId] > 1
+  );
+
+  const handleShareTicket = useCallback(async (ticket) => {
+    if (!canShareTicket(ticket)) return;
     try {
-      const allTickets = await getAllUserTickets('all');
-      const eventTickets = allTickets.filter(ticket => ticket.eventId === eventId);
-      
-      // Count unique attendees (different emails)
-      const uniqueAttendees = new Set();
-      eventTickets.forEach(ticket => {
-        if (ticket.buyerEmail) {
-          uniqueAttendees.add(ticket.buyerEmail);
-        }
+      const { shareToken } = await shareTicket(ticket.id);
+      const message = buildTicketShareMessage({
+        eventTitle: ticket.eventTitle,
+        t,
+        shareToken,
+        includeUrl: Platform.OS !== 'ios',
       });
-      
-      return uniqueAttendees.size;
-    } catch (error) {
-      console.error('Error getting attendee count for event:', eventId, error);
-      return 0;
+      await Share.share({
+        message,
+        ...(Platform.OS === 'ios' ? { url: buildTicketShareUrl(shareToken) } : {}),
+      });
+    } catch (e) {
+      Alert.alert(t('common.error'), e.message || t('myTickets.share.alertFailed'));
     }
+  }, [canShareTicket, shareTicket, t]);
+
+  const buildSharedGroups = async (upcoming) => {
+    const orderIds = [...new Set(upcoming.filter((t) => t.orderId).map((t) => t.orderId))];
+    const groups = await Promise.all(
+      orderIds.map(async (orderId) => {
+        const orderTickets = upcoming.filter((t) => t.orderId === orderId);
+        const isMulti = orderTickets.length > 1;
+        const companions = isAuthenticated
+          ? await getOrderShareCompanions(orderId)
+          : [];
+        const withSelf = companions.length > 0 ? companions : (
+          isMulti && user ? [{
+            userId: user.id,
+            name: user.name || user.email?.split('@')[0],
+            avatar: user.profilePicture,
+            role: 'self',
+          }] : []
+        );
+        const hasCompanions = withSelf.some((c) => c.role !== 'self');
+        if (!isMulti && !hasCompanions) return null;
+        return {
+          orderId,
+          tickets: orderTickets,
+          companions: withSelf,
+          eventTitle: orderTickets[0]?.eventTitle,
+          eventImage: orderTickets[0]?.eventImage,
+          canShare: isMulti && isAuthenticated,
+        };
+      }),
+    );
+    return groups.filter(Boolean);
   };
 
-  // Load tickets on component mount and when tab changes
   const loadTickets = async () => {
     try {
       setLoading(true);
       const [upcoming, past] = await Promise.all([
         getUserTickets('upcoming'),
-        getUserTickets('past')
-      ]);
-      
-      // Enhance tickets with attendee count data
-      const enhanceTicketsWithAttendeeCount = async (tickets) => {
-        const enhancedTickets = await Promise.all(
-          tickets.map(async (ticket) => {
-            const attendeeCount = await getAttendeeCountForEvent(ticket.eventId);
-            return {
-              ...ticket,
-              attendeeCount: attendeeCount
-            };
-          })
-        );
-        return enhancedTickets;
-      };
-
-      const [enhancedUpcoming, enhancedPast] = await Promise.all([
-        enhanceTicketsWithAttendeeCount(upcoming),
-        enhanceTicketsWithAttendeeCount(past)
+        getUserTickets('past'),
       ]);
 
-      setUpcomingTickets(enhancedUpcoming);
-      setPastTickets(enhancedPast);
-      
-      console.log('🎫 MyTicketsScreen Debug Info:');
-      console.log('Active tab:', activeTab);
-      console.log('Upcoming tickets:', enhancedUpcoming?.length || 0);
-      console.log('Past tickets:', enhancedPast?.length || 0);
+      setUpcomingTickets(upcoming);
+      setPastTickets(past);
+      setSharedGroups(await buildSharedGroups(upcoming));
     } catch (error) {
       console.error('Error loading tickets:', error);
     } finally {
@@ -538,16 +650,7 @@ const MyTicketsScreen = ({ navigation, route }) => {
     <View style={styles.container}>
       <StatusBar barStyle="light-content" backgroundColor="transparent" translucent />
       
-      {/* Dynamic Background */}
-      <LinearGradient
-        colors={[
-          '#0c162d',
-          '#1a2a4a', 
-          '#2a3f5f',
-          '#0c162d'
-        ]}
-        style={styles.backgroundGradient}
-      />
+      <SambaBackground />
 
       <SafeAreaView style={styles.safeArea} edges={['top']}>
         {/* Enhanced Header */}
@@ -588,7 +691,7 @@ const MyTicketsScreen = ({ navigation, route }) => {
                 >
                   {activeTab === tab && (
                     <LinearGradient
-                      colors={['rgba(255, 215, 0, 0.3)', 'rgba(255, 215, 0, 0.1)']}
+                      colors={[samba.pinkBorder, samba.pinkFaint]}
                       style={styles.activeTabBackground}
                     />
                   )}
@@ -596,12 +699,12 @@ const MyTicketsScreen = ({ navigation, route }) => {
                     name={iconName}
                     type="feather"
                     size={18}
-                    color={activeTab === tab ? '#FFD700' : 'rgba(255,255,255,0.6)'}
+                    color={activeTab === tab ? samba.pink : 'rgba(255,255,255,0.6)'}
                     style={styles.tabIcon}
                   />
                   <Text style={[
                     styles.tabText,
-                    { color: activeTab === tab ? '#FFD700' : 'rgba(255,255,255,0.6)' }
+                    { color: activeTab === tab ? samba.pink : 'rgba(255,255,255,0.6)' }
                   ]}>
                     {label}
                   </Text>
@@ -624,19 +727,36 @@ const MyTicketsScreen = ({ navigation, route }) => {
           scrollEventThrottle={16}
           bounces={true}
         >
-          {currentTickets.length > 0 ? (
-            currentTickets.map((ticket, index) => (
-              <TicketCard
-                key={ticket.id}
-                ticket={ticket}
-                index={index}
-                scrollY={scrollY}
-                isPast={activeTab === 'past' || (activeTab === 'all' && pastTickets.some(p => p.id === ticket.id))}
-                onPress={() => navigation.navigate('TicketDetails', { ticket })}
-              />
-            ))
+          {loading ? (
+            <ActivityIndicator size="large" color={samba.pink} style={{ marginTop: 40 }} />
           ) : (
-            <EmptyState activeTab={activeTab} navigation={navigation} />
+            <>
+              {sharedGroups.length > 0 && activeTab !== 'past' && (
+                <SharedTicketsSection
+                  groups={sharedGroups}
+                  onTicketPress={(ticket) => navigation.navigate('TicketDetails', { ticket })}
+                  onShareTicket={handleShareTicket}
+                />
+              )}
+              {displayTickets.length > 0 || sharedGroups.length > 0 ? (
+                <>
+                  {displayTickets.map((ticket, index) => (
+                  <TicketCard
+                    key={ticket.id}
+                    ticket={ticket}
+                    index={index}
+                    scrollY={scrollY}
+                    isPast={activeTab === 'past' || (activeTab === 'all' && pastTickets.some(p => p.id === ticket.id))}
+                    canShare={canShareTicket(ticket)}
+                    onShare={() => handleShareTicket(ticket)}
+                    onPress={() => navigation.navigate('TicketDetails', { ticket })}
+                  />
+                ))}
+                </>
+              ) : (
+                <EmptyState activeTab={activeTab} navigation={navigation} />
+              )}
+            </>
           )}
         </ScrollView>
       </SafeAreaView>
@@ -649,7 +769,7 @@ const MyTicketsScreen = ({ navigation, route }) => {
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: '#000000',
+    backgroundColor: samba.bgDeep,
   },
   backgroundGradient: {
     position: 'absolute',
@@ -724,7 +844,7 @@ const styles = StyleSheet.create({
     position: 'relative',
   },
   activeTab: {
-    backgroundColor: 'rgba(255, 215, 0, 0.15)',
+    backgroundColor: samba.pinkFaint,
   },
   activeTabBackground: {
     position: 'absolute',
@@ -748,7 +868,7 @@ const styles = StyleSheet.create({
     marginLeft: -15,
     width: 30,
     height: 3,
-    backgroundColor: '#FFD700',
+    backgroundColor: samba.pink,
     borderRadius: 2,
   },
   scrollView: {
@@ -1025,7 +1145,7 @@ const styles = StyleSheet.create({
     height: 120,
     borderRadius: 60,
     borderWidth: 2,
-    borderColor: '#FFD700',
+    borderColor: samba.pink,
   },
   emptyStateTitle: {
     fontSize: 26,
@@ -1059,7 +1179,7 @@ const styles = StyleSheet.create({
     marginBottom: 32,
     ...Platform.select({
       ios: {
-        shadowColor: '#FFD700',
+        shadowColor: samba.pink,
         shadowOffset: { width: 0, height: 4 },
         shadowOpacity: 0.3,
         shadowRadius: 12,
@@ -1114,6 +1234,140 @@ const styles = StyleSheet.create({
     fontWeight: '600',
     color: 'rgba(255,255,255,0.8)',
     textAlign: 'center',
+  },
+  shareButton: {
+    marginTop: 16,
+    borderRadius: 14,
+    overflow: 'hidden',
+  },
+  shareButtonGradient: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingVertical: 12,
+    gap: 8,
+  },
+  shareButtonText: {
+    fontSize: 14,
+    fontWeight: '700',
+    color: '#FFF',
+    marginLeft: 8,
+  },
+  sharedSection: {
+    marginBottom: 28,
+  },
+  sharedSectionTitle: {
+    fontSize: 20,
+    fontWeight: '800',
+    color: '#FFF',
+    marginBottom: 16,
+    letterSpacing: -0.3,
+  },
+  sharedGroupCard: {
+    borderRadius: 20,
+    overflow: 'hidden',
+    marginBottom: 16,
+    minHeight: 200,
+    borderWidth: 1,
+    borderColor: samba.pinkBorder,
+  },
+  sharedGroupImage: {
+    ...StyleSheet.absoluteFillObject,
+    width: '100%',
+    height: '100%',
+  },
+  sharedGroupOverlay: {
+    ...StyleSheet.absoluteFillObject,
+  },
+  sharedGroupContent: {
+    padding: 20,
+    justifyContent: 'flex-end',
+    minHeight: 200,
+  },
+  sharedGroupTitle: {
+    fontSize: 18,
+    fontWeight: '800',
+    color: '#FFF',
+    textTransform: 'uppercase',
+    marginBottom: 4,
+  },
+  sharedGroupSub: {
+    fontSize: 13,
+    color: samba.textMuted,
+    marginBottom: 12,
+  },
+  companionsRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginBottom: 12,
+    flexWrap: 'wrap',
+    gap: 8,
+  },
+  companionsLabel: {
+    fontSize: 12,
+    fontWeight: '600',
+    color: samba.textMuted,
+    marginRight: 4,
+  },
+  avatarStack: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    flex: 1,
+    flexWrap: 'wrap',
+  },
+  companionAvatarWrap: {
+    borderWidth: 2,
+    borderColor: samba.bgDeep,
+    borderRadius: 18,
+  },
+  companionAvatar: {
+    width: 32,
+    height: 32,
+    borderRadius: 16,
+  },
+  companionAvatarFallback: {
+    backgroundColor: samba.pinkFaint,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  companionInitial: {
+    fontSize: 13,
+    fontWeight: '700',
+    color: samba.pink,
+  },
+  shareHintText: {
+    fontSize: 12,
+    color: samba.green,
+    marginLeft: 8,
+    fontWeight: '600',
+  },
+  sharedTicketActions: {
+    gap: 8,
+  },
+  sharedTicketRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: 'rgba(255,255,255,0.08)',
+    borderRadius: 12,
+    overflow: 'hidden',
+  },
+  sharedTicketTap: {
+    flex: 1,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingVertical: 10,
+    paddingHorizontal: 14,
+  },
+  sharedTicketType: {
+    fontSize: 14,
+    fontWeight: '600',
+    color: '#FFF',
+    flex: 1,
+  },
+  sharedShareIconBtn: {
+    padding: 12,
+    backgroundColor: samba.pinkFaint,
   },
 });
 

@@ -3,6 +3,7 @@ import {
   StyleSheet,
   View,
   FlatList,
+  ScrollView,
   TouchableOpacity,
   Image,
   Dimensions,
@@ -16,10 +17,19 @@ import { Text, Icon } from '@rneui/themed';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { LinearGradient } from 'expo-linear-gradient';
 import LeafletMap from '../components/LeafletMap';
+import RangeCalendar, {
+  hasActiveRange,
+  isDateInRange,
+  formatDateRangeLabel,
+} from '../components/RangeCalendar';
+import { useFocusEffect } from '@react-navigation/native';
 import CustomNavBar from '../components/CustomNavBar';
+import SambaBackground from '../components/SambaBackground';
+import { samba } from '../theme/samba';
 import { useEvents } from '../context/EventsContext';
 import { useAuth } from '../context/AuthContext';
 import { useLanguage } from '../context/LanguageContext';
+import { getGoogleMapsApiKey } from '../config/env';
 
 // ─── Environment detection ────────────────────────────────────────────────────
 // react-native-maps with PROVIDER_GOOGLE requires native Google Maps SDK compiled in.
@@ -40,12 +50,13 @@ const useNativeMap = nativeMapsAvailable && Platform.OS === 'android';
 
 const { width, height: SCREEN_H } = Dimensions.get('window');
 const CARD_WIDTH   = (width - 48) / 2;
-const GOOGLE_KEY   = process.env.EXPO_PUBLIC_GOOGLE_MAPS_API_KEY;
+const GOOGLE_KEY   = getGoogleMapsApiKey();
 
 // Bottom sheet snap positions (translateY from top of screen)
 const SNAP_PEEK = SCREEN_H * 0.62;
 const SNAP_HALF = SCREEN_H * 0.42;
 const SNAP_FULL = 110;
+const USER_MAP_DELTA = 0.1;
 
 // ─── Dark map style ───────────────────────────────────────────────────────────
 const DARK_MAP = [
@@ -62,62 +73,23 @@ const DARK_MAP = [
 ];
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
-const sameDay = (a, b) =>
-  a.getFullYear() === b.getFullYear() &&
-  a.getMonth()    === b.getMonth()    &&
-  a.getDate()     === b.getDate();
+const EXPLORE_CATEGORIES = [
+  { key: 'all', patterns: null },
+  { key: 'music', patterns: ['music', 'concert'] },
+  { key: 'nightlife', patterns: ['nightlife'] },
+  { key: 'food', patterns: ['food', 'drink'] },
+  { key: 'arts', patterns: ['arts', 'culture'] },
+  { key: 'sports', patterns: ['sport', 'fitness'] },
+  { key: 'festivals', patterns: ['festival'] },
+  { key: 'comedy', patterns: ['comedy'] },
+  { key: 'tech', patterns: ['tech', 'technology', 'science'] },
+  { key: 'outdoor', patterns: ['outdoor', 'travel'] },
+];
 
-// ─── Mini calendar ────────────────────────────────────────────────────────────
-const DAY_KEYS   = ['su','mo','tu','we','th','fr','sa'];
-const MONTH_KEYS = ['january','february','march','april','may','june','july','august','september','october','november','december'];
-const CAL_CELL   = (width - 40 - 16) / 7;
-
-const InlineCalendar = ({ selected, onSelect }) => {
-  const { t } = useLanguage();
-  const today = new Date();
-  const [yr, setYr] = useState(today.getFullYear());
-  const [mo, setMo] = useState(today.getMonth());
-
-  const prevMo = () => mo === 0  ? (setMo(11), setYr(y=>y-1)) : setMo(m=>m-1);
-  const nextMo = () => mo === 11 ? (setMo(0),  setYr(y=>y+1)) : setMo(m=>m+1);
-  const first  = new Date(yr, mo, 1).getDay();
-  const days   = new Date(yr, mo+1, 0).getDate();
-  const cells  = Array(first).fill(null).concat(Array.from({length:days},(_,i)=>i+1));
-  while (cells.length % 7 !== 0) cells.push(null);
-  const isSel  = d => selected && selected.getDate()===d && selected.getMonth()===mo && selected.getFullYear()===yr;
-  const isTdy  = d => d===today.getDate() && mo===today.getMonth() && yr===today.getFullYear();
-
-  return (
-    <View style={calSt.cal}>
-      <View style={calSt.nav}>
-        <TouchableOpacity onPress={prevMo} hitSlop={{top:10,bottom:10,left:10,right:10}}>
-          <Icon name="chevron-left" type="feather" size={20} color="#FFF"/>
-        </TouchableOpacity>
-        <Text style={calSt.label}>{t(`calendar.months.${MONTH_KEYS[mo]}`)} {yr}</Text>
-        <TouchableOpacity onPress={nextMo} hitSlop={{top:10,bottom:10,left:10,right:10}}>
-          <Icon name="chevron-right" type="feather" size={20} color="#FFF"/>
-        </TouchableOpacity>
-      </View>
-      <View style={calSt.row}>
-        {DAY_KEYS.map(d => <Text key={d} style={calSt.dayH}>{t(`calendar.daysShort.${d}`)}</Text>)}
-      </View>
-      {Array.from({length:cells.length/7},(_,r)=>(
-        <View key={r} style={calSt.row}>
-          {cells.slice(r*7,r*7+7).map((d,i)=>(
-            <TouchableOpacity key={i} style={[calSt.cell,d&&isSel(d)&&calSt.selCell]}
-              onPress={()=>d&&onSelect(new Date(yr,mo,d))} disabled={!d} activeOpacity={d?0.7:1}>
-              {d ? <Text style={[calSt.cellTxt,isTdy(d)&&calSt.todayTxt,isSel(d)&&calSt.selTxt]}>{d}</Text> : null}
-            </TouchableOpacity>
-          ))}
-        </View>
-      ))}
-      {selected && (
-        <TouchableOpacity style={calSt.clear} onPress={()=>onSelect(null)}>
-          <Text style={calSt.clearTxt}>{t('explore.calendar.clearFilter')}</Text>
-        </TouchableOpacity>
-      )}
-    </View>
-  );
+const matchesCategory = (category, patterns) => {
+  if (!patterns) return true;
+  const value = (category || '').toLowerCase();
+  return patterns.some((pattern) => value.includes(pattern));
 };
 
 // ─── Small event card ─────────────────────────────────────────────────────────
@@ -144,15 +116,55 @@ const SmallEventCard = ({ event, onPress }) => {
 export default function ExploreScreen({ navigation }) {
   const insets = useSafeAreaInsets();
   const { t, locale } = useLanguage();
-  const { userLocation }  = useAuth();
+  const {
+    userLocation,
+    locationPermission,
+    getCurrentLocation,
+    requestLocationPermission,
+  } = useAuth();
   const { getUpcomingEvents, getLiveEvents } = useEvents();
   const mapRef = useRef(null);
+  const locationBootstrapped = useRef(false);
+  const initialMapRegion = useRef(null);
 
-  const [query,       setQuery]      = useState('');
-  const [dateFilter,  setDateFilter] = useState(null);
-  const [calOpen,     setCalOpen]    = useState(false);
-  const [selectedPin, setSelectedPin] = useState(null);
+  const centerMapOnUser = useCallback((lat, lng) => {
+    if (!lat || !lng || !mapRef.current?.animateToRegion) return;
+    mapRef.current.animateToRegion({
+      latitude: lat,
+      longitude: lng,
+      latitudeDelta: USER_MAP_DELTA,
+      longitudeDelta: USER_MAP_DELTA,
+    }, 500);
+  }, []);
+
+  // Fetch location once if we don't have coords yet — never auto-recenter after that
+  useFocusEffect(
+    useCallback(() => {
+      if (locationBootstrapped.current) return;
+      if (userLocation?.latitude && userLocation?.longitude) {
+        locationBootstrapped.current = true;
+        return;
+      }
+
+      locationBootstrapped.current = true;
+      (async () => {
+        if (locationPermission === true) {
+          await getCurrentLocation();
+        } else if (locationPermission !== false) {
+          await requestLocationPermission();
+        }
+      })();
+    }, [locationPermission, getCurrentLocation, requestLocationPermission, userLocation?.latitude, userLocation?.longitude]),
+  );
+
+  const [query,           setQuery]          = useState('');
+  const [dateRange,       setDateRange]      = useState({ start: null, end: null });
+  const [categoryFilter,  setCategoryFilter] = useState('all');
+  const [calOpen,         setCalOpen]        = useState(false);
+  const [selectedPin,     setSelectedPin]    = useState(null);
   const calAnim = useRef(new Animated.Value(0)).current;
+
+  const showMap = !!(userLocation?.latitude && userLocation?.longitude);
 
   // ── Sheet drag ──────────────────────────────────────────────────────────────
   const sheetY    = useRef(new Animated.Value(SNAP_PEEK)).current;
@@ -161,6 +173,17 @@ export default function ExploreScreen({ navigation }) {
 
   const snapTo = (y) =>
     Animated.spring(sheetY, { toValue:y, tension:60, friction:14, useNativeDriver:true }).start();
+
+  useEffect(() => {
+    if (!showMap) {
+      sheetY.setValue(0);
+      setSelectedPin(null);
+      return;
+    }
+    if (sheetYVal.current === 0) {
+      snapTo(SNAP_PEEK);
+    }
+  }, [showMap, sheetY]);
 
   const panResponder = useRef(PanResponder.create({
     onMoveShouldSetPanResponder: (_, g) => Math.abs(g.dy) > 6 && Math.abs(g.dy) > Math.abs(g.dx),
@@ -250,60 +273,33 @@ export default function ExploreScreen({ navigation }) {
     }).filter(Boolean).slice(0, 20),
   [allEvents, geocodedCoords]);
 
-  // ── Map initial region — center on user, zoom to show nearby pins ──────────
-  const initialRegion = useMemo(() => {
-    const baseLat = userLocation?.latitude  ?? 40.7128;
-    const baseLng = userLocation?.longitude ?? -74.006;
-
-    // Find pins within ~100 miles of user
-    const nearby = pinEvents.filter(e => {
-      const dlat = e._coords.latitude  - baseLat;
-      const dlng = e._coords.longitude - baseLng;
-      return Math.sqrt(dlat * dlat + dlng * dlng) < 2; // ~140 miles
-    });
-
-    if (nearby.length > 0) {
-      const lats = nearby.map(e => e._coords.latitude);
-      const lngs = nearby.map(e => e._coords.longitude);
-      const minLat = Math.min(...lats, baseLat);
-      const maxLat = Math.max(...lats, baseLat);
-      const minLng = Math.min(...lngs, baseLng);
-      const maxLng = Math.max(...lngs, baseLng);
-      return {
-        latitude:       (minLat + maxLat) / 2,
-        longitude:      (minLng + maxLng) / 2,
-        latitudeDelta:  Math.max((maxLat - minLat) * 1.4, 0.08),
-        longitudeDelta: Math.max((maxLng - minLng) * 1.4, 0.08),
+  const mapRegion = useMemo(() => {
+    if (!userLocation?.latitude || !userLocation?.longitude) return null;
+    if (!initialMapRegion.current) {
+      initialMapRegion.current = {
+        latitude: userLocation.latitude,
+        longitude: userLocation.longitude,
+        latitudeDelta: USER_MAP_DELTA,
+        longitudeDelta: USER_MAP_DELTA,
       };
     }
-
-    return { latitude: baseLat, longitude: baseLng, latitudeDelta: 0.15, longitudeDelta: 0.15 };
-  }, [userLocation, pinEvents]);
-
-  // When user location becomes available, animate map there
-  useEffect(() => {
-    if (userLocation?.latitude && mapRef.current) {
-      mapRef.current.animateToRegion({
-        latitude:       userLocation.latitude,
-        longitude:      userLocation.longitude,
-        latitudeDelta:  0.12,
-        longitudeDelta: 0.12,
-      }, 800);
-    }
+    return initialMapRegion.current;
   }, [userLocation?.latitude, userLocation?.longitude]);
 
   // ── Filtered list ───────────────────────────────────────────────────────────
   const filtered = useMemo(() => {
     const q = query.toLowerCase().trim();
+    const categoryPatterns = EXPLORE_CATEGORIES.find((c) => c.key === categoryFilter)?.patterns ?? null;
     return allEvents.filter(ev => {
-      if (dateFilter && ev.rawDate && !sameDay(ev.rawDate, dateFilter)) return false;
+      if (hasActiveRange(dateRange) && ev.rawDate && !isDateInRange(ev.rawDate, dateRange)) return false;
+      if (!matchesCategory(ev.category, categoryPatterns)) return false;
       if (!q) return true;
       return ev.title.toLowerCase().includes(q) ||
         (ev.location||'').toLowerCase().includes(q) ||
         ev.category.toLowerCase().includes(q) ||
         ev.date.toLowerCase().includes(q);
     });
-  }, [allEvents, query, dateFilter]);
+  }, [allEvents, query, dateRange, categoryFilter]);
 
   const handleEventPress = ev => navigation.navigate('EventDetails', { event: ev.originalEvent });
 
@@ -317,17 +313,18 @@ export default function ExploreScreen({ navigation }) {
   ), []);
 
   return (
-    <View style={{ flex:1, backgroundColor:'#000' }}>
+    <View style={{ flex:1, backgroundColor: samba.bgDeep }}>
+      <SambaBackground />
       <StatusBar barStyle="light-content" />
 
-      {/* ── Map: Leaflet (iOS/Expo Go) or react-native-maps (Android native) ── */}
-      {useNativeMap ? (
+      {/* ── Map (only when user location is available) ── */}
+      {showMap && mapRegion && (useNativeMap ? (
         <MapView
           ref={mapRef}
           style={StyleSheet.absoluteFill}
           provider={PROVIDER_GOOGLE}
           customMapStyle={DARK_MAP}
-          initialRegion={initialRegion}
+          initialRegion={mapRegion}
           showsUserLocation
           showsMyLocationButton={false}
           showsCompass={false}
@@ -351,26 +348,26 @@ export default function ExploreScreen({ navigation }) {
           ))}
         </MapView>
       ) : (
-        // Leaflet via WebView — works in Expo Go and iOS without Google Maps SDK compiled in
         <LeafletMap
           ref={mapRef}
-          initialRegion={initialRegion}
+          initialRegion={mapRegion}
           pinEvents={pinEvents}
           selectedPin={selectedPin}
           onMarkerPress={id => setSelectedPin(prev => prev === id ? null : id)}
           onMapPress={() => setSelectedPin(null)}
           userLocation={userLocation}
         />
+      ))}
+
+      {showMap && (
+        <LinearGradient
+          colors={['transparent','transparent','rgba(0,0,0,0.4)','#000']}
+          style={[StyleSheet.absoluteFill, { pointerEvents:'none' }]}
+        />
       )}
 
-      {/* Gradient fade at bottom toward sheet */}
-      <LinearGradient
-        colors={['transparent','transparent','rgba(0,0,0,0.4)','#000']}
-        style={[StyleSheet.absoluteFill, { pointerEvents:'none' }]}
-      />
-
       {/* Selected event card floats above the sheet */}
-      {selectedEvent && (
+      {showMap && selectedEvent && (
         <TouchableOpacity
           style={[mapSt.pinCard, { bottom: SCREEN_H - SNAP_PEEK + 16 }]}
           onPress={() => { setSelectedPin(null); handleEventPress(selectedEvent); }}
@@ -389,27 +386,33 @@ export default function ExploreScreen({ navigation }) {
       )}
 
       {/* My location button — re-centers map to user location */}
-      {userLocation?.latitude && (
+      {showMap && userLocation?.latitude && (
         <TouchableOpacity
           style={[mapSt.locBtn, { top: insets.top + 14 }]}
-          onPress={() => mapRef.current?.animateToRegion?.({
-            latitude:      userLocation.latitude,
-            longitude:     userLocation.longitude,
-            latitudeDelta: 0.08,
-            longitudeDelta:0.08,
-          }, 500)}
+          onPress={() => centerMapOnUser(userLocation.latitude, userLocation.longitude)}
           activeOpacity={0.8}
         >
           <Icon name="crosshair" type="feather" size={15} color="#fff"/>
         </TouchableOpacity>
       )}
 
-      {/* ── Draggable bottom sheet ───────────────────────────────────────── */}
-      <Animated.View style={[sheetSt.sheet, { transform:[{ translateY: sheetY }] }]}>
-        {/* Drag handle */}
-        <View {...panResponder.panHandlers} style={sheetSt.handleArea}>
-          <View style={sheetSt.handle}/>
-        </View>
+      {/* ── Events panel — full page without map, draggable sheet with map ── */}
+      <Animated.View style={[
+        sheetSt.sheet,
+        !showMap && sheetSt.sheetFullPage,
+        { transform:[{ translateY: showMap ? sheetY : 0 }], paddingTop: showMap ? 0 : insets.top },
+      ]}>
+        {showMap && (
+          <View {...panResponder.panHandlers} style={sheetSt.handleArea}>
+            <View style={sheetSt.handle}/>
+          </View>
+        )}
+
+        {!showMap && (
+          <View style={sheetSt.listHeader}>
+            <Text style={sheetSt.listHeaderTitle}>{t('nav.explore')}</Text>
+          </View>
+        )}
 
         {/* Search + calendar */}
         <View style={sheetSt.searchRow}>
@@ -417,7 +420,7 @@ export default function ExploreScreen({ navigation }) {
             <Icon name="search" type="feather" size={16} color="rgba(255,255,255,0.4)" style={{marginRight:8}}/>
             <TextInput
               style={sheetSt.searchInput}
-              placeholder="Search events…"
+              placeholder={t('explore.searchPlaceholder')}
               placeholderTextColor="rgba(255,255,255,0.3)"
               value={query}
               onChangeText={setQuery}
@@ -430,38 +433,70 @@ export default function ExploreScreen({ navigation }) {
             )}
           </View>
           <TouchableOpacity
-            style={[sheetSt.calBtn, (calOpen||dateFilter) && sheetSt.calBtnActive]}
+            style={[sheetSt.calBtn, (calOpen || hasActiveRange(dateRange)) && sheetSt.calBtnActive]}
             onPress={calOpen ? closeCal : openCal}
             activeOpacity={0.8}
           >
-            <Icon name="calendar" type="feather" size={16} color={(calOpen||dateFilter)?'#FF4B8C':'rgba(255,255,255,0.6)'}/>
+            <Icon name="calendar" type="feather" size={16} color={(calOpen || hasActiveRange(dateRange)) ? '#FF4B8C' : 'rgba(255,255,255,0.6)'}/>
           </TouchableOpacity>
         </View>
 
+        {/* Category filters */}
+        <ScrollView
+          horizontal
+          showsHorizontalScrollIndicator={false}
+          style={sheetSt.categoriesScroll}
+          contentContainerStyle={sheetSt.categoriesContent}
+          keyboardShouldPersistTaps="handled"
+        >
+          {EXPLORE_CATEGORIES.map(({ key }) => {
+            const active = categoryFilter === key;
+            return (
+              <TouchableOpacity
+                key={key}
+                style={[sheetSt.categoryPill, active && sheetSt.categoryPillActive]}
+                onPress={() => setCategoryFilter(key)}
+                activeOpacity={0.75}
+              >
+                <Text style={[sheetSt.categoryLabel, active && sheetSt.categoryLabelActive]}>
+                  {t(`explore.categories.${key}`)}
+                </Text>
+              </TouchableOpacity>
+            );
+          })}
+        </ScrollView>
+
         {/* Inline calendar */}
         <Animated.View style={{
-          maxHeight: calAnim.interpolate({inputRange:[0,1],outputRange:[0,300]}),
-          opacity:   calAnim.interpolate({inputRange:[0,0.3,1],outputRange:[0,1,1]}),
+          maxHeight: calAnim.interpolate({ inputRange: [0, 1], outputRange: [0, 360] }),
+          opacity:   calAnim.interpolate({ inputRange: [0, 0.3, 1], outputRange: [0, 1, 1] }),
           overflow:'hidden', paddingHorizontal:20,
         }} pointerEvents={calOpen ? 'auto' : 'none'}>
-          <InlineCalendar selected={dateFilter} onSelect={d=>{ setDateFilter(d); if(d) closeCal(); }}/>
+          <RangeCalendar
+            range={dateRange}
+            onChange={setDateRange}
+            onRangeComplete={closeCal}
+            locale={locale}
+          />
         </Animated.View>
 
-        {/* Active date chip */}
-        {dateFilter && !calOpen && (
+        {/* Active date range chip */}
+        {hasActiveRange(dateRange) && !calOpen && (
           <View style={sheetSt.dateChip}>
             <Icon name="calendar" type="feather" size={11} color="#FF4B8C" style={{marginRight:4}}/>
             <Text style={sheetSt.dateChipTxt}>
-              {dateFilter.toLocaleDateString(locale,{month:'short',day:'numeric',year:'numeric'})}
+              {formatDateRangeLabel(dateRange, locale, t)}
             </Text>
-            <TouchableOpacity onPress={()=>setDateFilter(null)} hitSlop={{top:8,bottom:8,left:8,right:8}}>
+            <TouchableOpacity onPress={() => setDateRange({ start: null, end: null })} hitSlop={{top:8,bottom:8,left:8,right:8}}>
               <Icon name="x" type="feather" size={12} color="rgba(255,255,255,0.5)" style={{marginLeft:6}}/>
             </TouchableOpacity>
           </View>
         )}
 
         <View style={sheetSt.countRow}>
-          <Text style={sheetSt.countTxt}>{filtered.length} event{filtered.length !== 1 ? 's' : ''}</Text>
+          <Text style={sheetSt.countTxt}>
+            {t('explore.eventCount', { count: filtered.length })}
+          </Text>
         </View>
 
         <FlatList
@@ -476,7 +511,12 @@ export default function ExploreScreen({ navigation }) {
           ListEmptyComponent={
             <View style={{alignItems:'center', marginTop:60}}>
               <Icon name="search" type="feather" size={36} color="rgba(255,255,255,0.15)"/>
-              <Text style={{fontSize:16,color:'rgba(255,255,255,0.3)',marginTop:14,fontWeight:'600'}}>No events found</Text>
+              <Text style={{fontSize:16,color:'rgba(255,255,255,0.3)',marginTop:14,fontWeight:'600'}}>
+                {t('explore.empty.title')}
+              </Text>
+              <Text style={{fontSize:13,color:'rgba(255,255,255,0.2)',marginTop:6,textAlign:'center'}}>
+                {t('explore.empty.subtitle')}
+              </Text>
             </View>
           }
         />
@@ -525,12 +565,34 @@ const sheetSt = StyleSheet.create({
   sheet: {
     position:'absolute', left:0, right:0,
     height: SCREEN_H + 40,
-    backgroundColor:'#0d0d0d',
+    backgroundColor: samba.bg,
     borderTopLeftRadius:28, borderTopRightRadius:28,
     ...Platform.select({
       ios:{ shadowColor:'#000', shadowOffset:{width:0,height:-6}, shadowOpacity:0.5, shadowRadius:20 },
       android:{ elevation:20 },
     }),
+  },
+  sheetFullPage: {
+    top: 0,
+    height: SCREEN_H,
+    borderTopLeftRadius: 0,
+    borderTopRightRadius: 0,
+    ...Platform.select({
+      ios: { shadowOpacity: 0, shadowRadius: 0 },
+      android: { elevation: 0 },
+    }),
+  },
+  listHeader: {
+    paddingHorizontal: 16,
+    paddingTop: 8,
+    paddingBottom: 4,
+  },
+  listHeaderTitle: {
+    fontSize: 28,
+    fontWeight: '900',
+    color: '#FFFFFF',
+    letterSpacing: 1,
+    textTransform: 'uppercase',
   },
   handleArea:   { paddingVertical:12, alignItems:'center' },
   handle:       { width:36, height:4, borderRadius:2, backgroundColor:'rgba(255,255,255,0.18)' },
@@ -539,6 +601,29 @@ const sheetSt = StyleSheet.create({
   searchInput:  { flex:1, fontSize:14, color:'#fff', fontWeight:'500' },
   calBtn:       { width:42, height:42, borderRadius:14, backgroundColor:'rgba(255,255,255,0.07)', borderWidth:1, borderColor:'rgba(255,255,255,0.1)', alignItems:'center', justifyContent:'center' },
   calBtnActive: { backgroundColor:'rgba(255,75,140,0.15)', borderColor:'rgba(255,75,140,0.3)' },
+  categoriesScroll: { flexGrow: 0, marginBottom: 6 },
+  categoriesContent: { paddingHorizontal: 16, paddingBottom: 4, alignItems: 'center' },
+  categoryPill: {
+    paddingHorizontal: 14,
+    paddingVertical: 8,
+    borderRadius: 20,
+    backgroundColor: 'rgba(255,255,255,0.07)',
+    borderWidth: 1,
+    borderColor: 'rgba(255,255,255,0.12)',
+    marginRight: 8,
+  },
+  categoryPillActive: {
+    backgroundColor: 'rgba(255,75,140,0.18)',
+    borderColor: '#FF4B8C',
+  },
+  categoryLabel: {
+    fontSize: 13,
+    fontWeight: '600',
+    color: 'rgba(255,255,255,0.6)',
+  },
+  categoryLabelActive: {
+    color: '#FF4B8C',
+  },
   dateChip:     { flexDirection:'row', alignItems:'center', alignSelf:'flex-start', marginHorizontal:16, marginBottom:8, backgroundColor:'rgba(255,75,140,0.12)', borderRadius:20, paddingHorizontal:12, paddingVertical:5, borderWidth:1, borderColor:'rgba(255,75,140,0.3)' },
   dateChipTxt:  { fontSize:12, fontWeight:'600', color:'#FF4B8C' },
   countRow:     { paddingHorizontal:16, marginBottom:4 },
@@ -554,20 +639,4 @@ const cardSt = StyleSheet.create({
   row:   { flexDirection:'row', alignItems:'center', marginBottom:2 },
   sub:   { fontSize:10, color:'rgba(255,255,255,0.7)', flex:1 },
   date:  { fontSize:10, color:'rgba(255,255,255,0.5)', fontWeight:'500' },
-});
-
-// ─── Calendar styles ──────────────────────────────────────────────────────────
-const calSt = StyleSheet.create({
-  cal:     { paddingTop:8, paddingBottom:8 },
-  nav:     { flexDirection:'row', alignItems:'center', justifyContent:'space-between', marginBottom:14 },
-  label:   { fontSize:14, fontWeight:'700', color:'#fff' },
-  row:     { flexDirection:'row', justifyContent:'space-around', marginBottom:4 },
-  dayH:    { width:CAL_CELL, textAlign:'center', fontSize:11, fontWeight:'600', color:'rgba(255,255,255,0.3)' },
-  cell:    { width:CAL_CELL, height:CAL_CELL, alignItems:'center', justifyContent:'center', borderRadius:CAL_CELL/2 },
-  selCell: { backgroundColor:'#FF4B8C' },
-  cellTxt: { fontSize:13, fontWeight:'500', color:'#fff' },
-  todayTxt:{ color:'#FF4B8C', fontWeight:'700' },
-  selTxt:  { color:'#fff', fontWeight:'700' },
-  clear:   { alignSelf:'center', marginTop:8, paddingVertical:6, paddingHorizontal:16 },
-  clearTxt:{ fontSize:13, color:'rgba(255,255,255,0.35)', fontWeight:'500' },
 });

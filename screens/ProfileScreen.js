@@ -1,14 +1,21 @@
 import React, { useRef, useEffect, useState } from 'react';
-import { StyleSheet, View, ScrollView, TouchableOpacity, Image, Dimensions, Platform, Animated, Alert, Modal } from 'react-native';
+import {
+  StyleSheet, View, ScrollView, TouchableOpacity, Image, Dimensions, Platform,
+  Animated, Alert, Modal, TextInput, KeyboardAvoidingView, ActivityIndicator,
+} from 'react-native';
 import { Text, useTheme, Icon, Avatar } from '@rneui/themed';
 import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 import { LinearGradient } from 'expo-linear-gradient';
 import CustomNavBar from '../components/CustomNavBar';
+import SambaBackground from '../components/SambaBackground';
+import { samba } from '../theme/samba';
 import { useAuth } from '../context/AuthContext';
 import { useLanguage } from '../context/LanguageContext';
+import { isValidEmailFormat } from '../utils/validateEmail';
 import { useEvents } from '../context/EventsContext';
 import { formatCount } from '../utils/formatNumbers';
 import { useSubtleFadeEntrance } from '../utils/useSubtleEntrance';
+import { navigateToScanTickets } from '../utils/scanNavigation';
 
 const { width } = Dimensions.get('window');
 
@@ -146,14 +153,6 @@ const EventItem = ({ event, onPress, animatedValue, isPast = false, isEditable =
             </Text>
           </View>
           
-          {/* Show attendee count only for non-past events */}
-          {!isPast && (
-            <View style={styles.attendeeCountBadge}>
-              <Icon name="users" type="feather" size={10} color="#FFFFFF" style={{ marginRight: 2 }} />
-              <Text style={styles.attendeeCountText}>{formatCount(event.attendees || 0)}</Text>
-            </View>
-          )}
-          
           {isPast && (
             <View style={styles.pastEventBadge}>
               <Text style={styles.pastEventText}>{t('profile.event.pastBadge')}</Text>
@@ -261,7 +260,7 @@ const OrganizerItem = ({ organizer, onPress, animatedValue }) => {
           {/* Avatar */}
           <View style={styles.organizerAvatarContainer}>
             <LinearGradient
-              colors={['#FFD700', '#FFA500']}
+              colors={samba.pinkGradient}
               style={styles.organizerAvatarBorder}
             >
               <Image
@@ -284,7 +283,7 @@ const OrganizerItem = ({ organizer, onPress, animatedValue }) => {
             {/* Stats */}
             <View style={styles.organizerStats}>
               <View style={styles.organizerStat}>
-                <Icon name="calendar" type="feather" size={12} color="#FFD700" />
+                <Icon name="calendar" type="feather" size={12} color={samba.green} />
                 <Text style={styles.organizerStatText}>
                   {t('profile.organizer.upcomingCount', { count: formatCount(organizer.upcomingEventsCount || 0) })}
                 </Text>
@@ -308,10 +307,245 @@ const OrganizerItem = ({ organizer, onPress, animatedValue }) => {
   );
 };
 
-const ProfileScreen = ({ navigation }) => {
+const GuestProfileScreen = ({ navigation }) => {
+  const insets = useSafeAreaInsets();
+  const { t } = useLanguage();
+  const { login, checkEmail } = useAuth();
+
+  const [email, setEmail] = useState('');
+  const [password, setPassword] = useState('');
+  const [showPassword, setShowPassword] = useState(false);
+  const [isLoading, setIsLoading] = useState(false);
+  const [isCheckingEmail, setIsCheckingEmail] = useState(false);
+  const [emailChecked, setEmailChecked] = useState(false);
+  const [showPasswordField, setShowPasswordField] = useState(false);
+  const emailCheckTimeoutRef = useRef(null);
+  const passwordFieldAnim = useRef(new Animated.Value(0)).current;
+
+  useEffect(() => {
+    if (emailChecked || !email.trim()) return undefined;
+    if (!isValidEmailFormat(email)) return undefined;
+
+    emailCheckTimeoutRef.current = setTimeout(() => {
+      handleEmailCheck();
+    }, 2000);
+
+    return () => {
+      if (emailCheckTimeoutRef.current) clearTimeout(emailCheckTimeoutRef.current);
+    };
+  }, [email, emailChecked]);
+
+  useEffect(() => {
+    if (!showPasswordField) return;
+    Animated.timing(passwordFieldAnim, { toValue: 1, duration: 300, useNativeDriver: true }).start();
+  }, [showPasswordField, passwordFieldAnim]);
+
+  const handleBackToEmail = () => {
+    setEmailChecked(false);
+    setShowPasswordField(false);
+    setPassword('');
+    passwordFieldAnim.setValue(0);
+  };
+
+  const handleEmailChange = (text) => {
+    setEmail(text);
+    if (emailChecked) {
+      setEmailChecked(false);
+      setShowPasswordField(false);
+      setPassword('');
+      passwordFieldAnim.setValue(0);
+    }
+  };
+
+  const handleEmailCheck = async () => {
+    if (!isValidEmailFormat(email)) return;
+
+    setIsCheckingEmail(true);
+    try {
+      const result = await checkEmail(email.trim());
+      if (!result.success) {
+        Alert.alert(t('common.error'), result.message || t('login.error.verifyEmail'));
+        return;
+      }
+
+      setEmailChecked(true);
+      if (result.exists) {
+        setShowPasswordField(true);
+      } else {
+        Alert.alert(
+          t('login.alert.createAccount.title'),
+          t('login.alert.createAccount.message'),
+          [
+            { text: t('common.cancel'), style: 'cancel', onPress: handleBackToEmail },
+            {
+              text: t('login.alert.createAccount.signUp'),
+              onPress: () => navigation.navigate('Register', { email: email.trim() }),
+            },
+          ],
+        );
+      }
+    } catch {
+      Alert.alert(t('common.error'), t('common.errorGeneric'));
+    } finally {
+      setIsCheckingEmail(false);
+    }
+  };
+
+  const handleLogin = async () => {
+    if (!password) {
+      Alert.alert(t('common.error'), t('login.error.passwordRequired'));
+      return;
+    }
+
+    setIsLoading(true);
+    try {
+      const result = await login(email.trim(), password);
+      if (!result.success) {
+        Alert.alert(t('login.alert.loginFailed.title'), result.message);
+      }
+    } catch {
+      Alert.alert(t('common.error'), t('common.errorGeneric'));
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  return (
+    <SafeAreaView style={[styles.container, { backgroundColor: samba.bgDeep }]} edges={[]}>
+      <SambaBackground />
+      <View style={[styles.lip, { paddingTop: insets.top + 14 }]}>
+        <View style={styles.avatarBox}>
+          <Image
+            source={require('../assets/icon.png')}
+            style={styles.avatarImg}
+            resizeMode="cover"
+          />
+        </View>
+        <View style={styles.headerInfo}>
+          <Text style={styles.userName}>{t('profile.guest.title')}</Text>
+          <Text style={styles.userContact}>{t('profile.guest.subtitle')}</Text>
+        </View>
+      </View>
+
+      <KeyboardAvoidingView
+        style={{ flex: 1 }}
+        behavior={Platform.OS === 'ios' ? 'padding' : undefined}
+        keyboardVerticalOffset={Platform.OS === 'ios' ? insets.top : 0}
+      >
+        <ScrollView
+          style={styles.scrollView}
+          showsVerticalScrollIndicator={false}
+          contentContainerStyle={[styles.scrollContent, { paddingTop: 20, paddingBottom: insets.bottom + 120 }]}
+          keyboardShouldPersistTaps="handled"
+        >
+          <View style={styles.guestForm}>
+          <Text style={styles.guestFormTitle}>{t('login.title')}</Text>
+
+          <View style={[styles.guestInputContainer, emailChecked && styles.guestInputChecked]}>
+            <TextInput
+              style={[styles.guestInput, emailChecked && styles.guestInputDisabled]}
+              placeholder={t('login.placeholder.email')}
+              placeholderTextColor="rgba(255,255,255,0.35)"
+              value={email}
+              onChangeText={handleEmailChange}
+              keyboardType="email-address"
+              autoCapitalize="none"
+              autoCorrect={false}
+              editable={!emailChecked}
+            />
+            {isCheckingEmail && (
+              <ActivityIndicator size="small" color="#FFFFFF" style={styles.guestInputSpinner} />
+            )}
+            {emailChecked && (
+              <TouchableOpacity style={styles.guestEditBtn} onPress={handleBackToEmail}>
+                <Icon name="edit-2" type="feather" size={16} color="#FFFFFF" />
+              </TouchableOpacity>
+            )}
+          </View>
+
+          {showPasswordField && (
+            <Animated.View
+              style={[
+                styles.guestInputContainer,
+                {
+                  opacity: passwordFieldAnim,
+                  transform: [{
+                    translateY: passwordFieldAnim.interpolate({
+                      inputRange: [0, 1],
+                      outputRange: [-12, 0],
+                    }),
+                  }],
+                },
+              ]}
+            >
+              <TextInput
+                style={[styles.guestInput, { paddingRight: 44 }]}
+                placeholder={t('login.placeholder.password')}
+                placeholderTextColor="rgba(255,255,255,0.35)"
+                value={password}
+                onChangeText={setPassword}
+                secureTextEntry={!showPassword}
+                autoCapitalize="none"
+                autoCorrect={false}
+                onSubmitEditing={handleLogin}
+              />
+              <TouchableOpacity style={styles.guestEditBtn} onPress={() => setShowPassword(!showPassword)}>
+                <Icon name={showPassword ? 'eye-off' : 'eye'} type="feather" size={16} color="rgba(255,255,255,0.7)" />
+              </TouchableOpacity>
+            </Animated.View>
+          )}
+
+          {showPasswordField && (
+            <TouchableOpacity
+              style={[styles.guestSignInBtn, isLoading && { opacity: 0.6 }]}
+              onPress={handleLogin}
+              disabled={isLoading}
+              activeOpacity={0.85}
+            >
+              <Text style={styles.guestSignInBtnText}>
+                {isLoading ? t('login.button.signingIn') : t('login.button.signIn')}
+              </Text>
+            </TouchableOpacity>
+          )}
+          </View>
+
+          <View style={styles.menuCard}>
+            <MenuItem
+              icon="maximize"
+              label={t('profile.guest.scanTickets')}
+              onPress={() => navigateToScanTickets(navigation, { isAuthenticated: false })}
+            />
+          </View>
+
+          <View style={styles.menuCard}>
+            <MenuItem
+              icon="search"
+              label={t('profile.guest.lookupTickets')}
+              onPress={() => navigation.navigate('TicketLookup')}
+            />
+          </View>
+
+          <View style={styles.menuCard}>
+            <MenuItem
+              icon="help-circle"
+              label={t('profile.guest.faqs')}
+              onPress={() => navigation.navigate('Faq')}
+            />
+          </View>
+
+          <Text style={styles.guestHint}>{t('profile.guest.hint')}</Text>
+        </ScrollView>
+      </KeyboardAvoidingView>
+
+      <CustomNavBar activeScreen="Profile" />
+    </SafeAreaView>
+  );
+};
+
+const AuthenticatedProfileScreen = ({ navigation }) => {
   const { theme } = useTheme();
   const insets = useSafeAreaInsets();
-  const { user, switchMode } = useAuth();
+  const { user, switchMode, logout } = useAuth();
   const { t } = useLanguage();
   const { followedOrganizers, events, getUserTickets, getEventsByOrganizer, getPastEvents, getUpcomingEvents, getLiveEvents, loading } = useEvents();
   const profileAnimation = useRef(new Animated.Value(0)).current;
@@ -333,6 +567,7 @@ const ProfileScreen = ({ navigation }) => {
   const [showPurchases, setShowPurchases] = useState(false);
   
   const isProvider = user?.role === 'provider';
+  const isScanner = user?.scannerInfo?.status === 'active';
   const currentMode = user?.currentMode || 'attendee';
 
   // Debug logging for followedOrganizers
@@ -820,7 +1055,8 @@ const ProfileScreen = ({ navigation }) => {
   };
 
   return (
-    <SafeAreaView style={[styles.container, { backgroundColor: '#000000' }]} edges={[]}>
+    <SafeAreaView style={[styles.container, { backgroundColor: samba.bgDeep }]} edges={[]}>
+      <SambaBackground />
       {/* ── Full-width lip header ─────────────────────────────────── */}
       <Animated.View style={[styles.lip, { paddingTop: insets.top + 14, opacity: profileAnimation }]}>
         {/* Avatar box */}
@@ -850,6 +1086,11 @@ const ProfileScreen = ({ navigation }) => {
           {currentMode === 'provider' && (
             <View style={styles.roleTag}>
               <Text style={styles.roleTagText}>{t('profile.roleTag.eventHost')}</Text>
+            </View>
+          )}
+          {currentMode === 'scanner' && (
+            <View style={[styles.roleTag, styles.roleTagScanner]}>
+              <Text style={styles.roleTagText}>{t('profile.roleTag.scanner')}</Text>
             </View>
           )}
         </View>
@@ -898,6 +1139,14 @@ const ProfileScreen = ({ navigation }) => {
             </View>
           )}
 
+          <View style={styles.menuCard}>
+            <MenuItem
+              icon="maximize"
+              label={isScanner ? t('profile.menu.myScanEvents') : t('profile.menu.scanTickets')}
+              onPress={() => navigateToScanTickets(navigation, { user, isAuthenticated: true })}
+            />
+          </View>
+
           {isProvider && currentMode === 'provider' && (
             <View style={styles.menuCard}>
               <MenuItem
@@ -924,6 +1173,38 @@ const ProfileScreen = ({ navigation }) => {
             </View>
           )}
 
+          {!isScanner && (
+            <View style={styles.menuCard}>
+              <MenuItem icon="check-square" label={t('profile.menu.becomeScanner')} onPress={() => navigation.navigate('BecomeScanner')} />
+            </View>
+          )}
+
+          {isScanner && (
+            <View style={styles.menuCard}>
+              <MenuItem
+                icon={currentMode === 'scanner' ? 'user' : 'maximize'}
+                label={currentMode === 'scanner' ? t('profile.menu.switchToAttendee') : t('profile.menu.switchToScanner')}
+                onPress={async () => {
+                  const newMode = currentMode === 'scanner' ? 'attendee' : 'scanner';
+                  const result = await switchMode(newMode);
+                  if (result.success) {
+                    navigation.navigate(newMode === 'scanner' ? 'ScannerEvents' : 'Home');
+                  } else {
+                    Alert.alert(t('common.error'), result.message);
+                  }
+                }}
+              />
+            </View>
+          )}
+
+          <View style={styles.menuCard}>
+            <MenuItem
+              icon="help-circle"
+              label={t('profile.menu.faqs')}
+              onPress={() => navigation.navigate('Faq')}
+            />
+          </View>
+
           <View style={styles.menuCard}>
             <MenuItem
               icon="info"
@@ -938,7 +1219,7 @@ const ProfileScreen = ({ navigation }) => {
               label={t('profile.menu.logout')}
               onPress={() => Alert.alert(t('profile.alert.logout.title'), t('profile.alert.logout.message'), [
                 { text: t('common.cancel'), style: 'cancel' },
-                { text: t('profile.menu.logout'), style: 'destructive', onPress: () => navigation.replace('Login') }
+                { text: t('profile.menu.logout'), style: 'destructive', onPress: () => logout() }
               ])}
               danger
             />
@@ -1086,7 +1367,7 @@ const ProfileScreen = ({ navigation }) => {
                   style={styles.actionButton}
                   onPress={handleEditFromPopup}
                 >
-                  <Icon name="edit-2" type="feather" size={20} color="#FFD700" />
+                  <Icon name="edit-2" type="feather" size={20} color={samba.pink} />
                   <Text style={styles.actionButtonText}>{t('profile.popup.editEvent')}</Text>
                   <Text style={styles.actionButtonSubtext}>{t('profile.popup.editEventSubtext')}</Text>
                 </TouchableOpacity>
@@ -1113,7 +1394,7 @@ const ProfileScreen = ({ navigation }) => {
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: '#000000', // Much darker background
+    backgroundColor: samba.bgDeep,
   },
   scrollView: {
     flex: 1,
@@ -1195,14 +1476,14 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     paddingHorizontal: 12,
     paddingVertical: 6,
-    backgroundColor: 'rgba(255, 215, 0, 0.1)',
+    backgroundColor: samba.pinkFaint,
     borderRadius: 16,
     borderWidth: 1,
-    borderColor: 'rgba(255, 215, 0, 0.3)',
+    borderColor: samba.pinkBorder,
   },
   viewAllText: {
     fontSize: 14,
-    color: '#FFD700',
+    color: samba.pink,
     fontWeight: '600',
     marginRight: 4,
   },
@@ -1258,7 +1539,7 @@ const styles = StyleSheet.create({
     position: 'absolute',
     top: 8,
     right: 8,
-    backgroundColor: '#FFD700',
+    backgroundColor: samba.green,
     width: 20,
     height: 20,
     borderRadius: 10,
@@ -1276,17 +1557,17 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     alignItems: 'center',
     borderWidth: 1,
-    borderColor: '#FFD700',
+    borderColor: samba.green,
   },
   ticketInfoContainer: {
-    backgroundColor: 'rgba(255, 215, 0, 0.2)',
+    backgroundColor: samba.greenMuted,
     paddingHorizontal: 8,
     paddingVertical: 2,
     borderRadius: 4,
     marginTop: 4,
   },
   ticketTypeText: {
-    color: '#FFD700',
+    color: samba.green,
     fontSize: 10,
     fontWeight: '600',
   },
@@ -1332,7 +1613,7 @@ const styles = StyleSheet.create({
   },
   organizerTitle: {
     fontSize: 16,
-    color: '#FFD700',
+    color: samba.green,
     marginBottom: 16,
     fontWeight: '500',
   },
@@ -1727,7 +2008,7 @@ const styles = StyleSheet.create({
   roleTagText: {
     fontSize: 11,
     fontWeight: '700',
-    color: '#FFD700',
+    color: samba.green,
     letterSpacing: 0.3,
   },
   userName: {
@@ -1859,6 +2140,70 @@ const styles = StyleSheet.create({
     fontWeight: '500',
     marginBottom: 6,
   },
+  guestForm: {
+    alignSelf: 'center',
+    width: '88%',
+    maxWidth: 320,
+    marginBottom: 8,
+  },
+  guestFormTitle: {
+    fontSize: 18, fontWeight: '700', color: '#FFFFFF',
+    marginBottom: 14, textAlign: 'center',
+  },
+  guestInputContainer: {
+    backgroundColor: '#161616',
+    borderRadius: 10,
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginBottom: 10,
+    height: 42,
+    paddingHorizontal: 12,
+    borderWidth: 1,
+    borderColor: 'rgba(255,255,255,0.1)',
+  },
+  guestInputChecked: {
+    borderColor: 'rgba(255,255,255,0.22)',
+    backgroundColor: 'rgba(255,255,255,0.04)',
+  },
+  guestInput: {
+    flex: 1,
+    height: 42,
+    color: '#FFFFFF',
+    fontSize: 14,
+  },
+  guestInputDisabled: {
+    color: 'rgba(255,255,255,0.65)',
+  },
+  guestInputSpinner: {
+    marginRight: 4,
+  },
+  guestEditBtn: {
+    padding: 6,
+  },
+  guestSignInBtn: {
+    height: 42,
+    borderRadius: 10,
+    backgroundColor: '#FFFFFF',
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginBottom: 20,
+    marginTop: 2,
+  },
+  guestSignInBtnText: {
+    color: '#0a0a0a',
+    fontSize: 14,
+    fontWeight: '700',
+  },
+  guestHint: {
+    fontSize: 13, color: 'rgba(255,255,255,0.35)', textAlign: 'center',
+    lineHeight: 20, paddingHorizontal: 12, marginTop: 8,
+  },
 });
+
+const ProfileScreen = ({ navigation }) => {
+  const { isAuthenticated } = useAuth();
+  if (!isAuthenticated) return <GuestProfileScreen navigation={navigation} />;
+  return <AuthenticatedProfileScreen navigation={navigation} />;
+};
 
 export default ProfileScreen; 

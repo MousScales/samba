@@ -1,7 +1,7 @@
 import React, { useState, useMemo, useCallback, useRef, useEffect } from 'react';
 import {
   StyleSheet, View, ScrollView, TouchableOpacity,
-  Dimensions, Platform, StatusBar,
+  Dimensions, Platform, StatusBar, Share, Alert, ActivityIndicator,
 } from 'react-native';
 import { Text, Icon } from '@rneui/themed';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -11,10 +11,14 @@ import Svg, {
   Rect, Circle, G, Line, Text as SvgText,
 } from 'react-native-svg';
 import CustomNavBar from '../components/CustomNavBar';
+import SambaBackground from '../components/SambaBackground';
+import { samba } from '../theme/samba';
 import { useEvents } from '../context/EventsContext';
 import { useAuth } from '../context/AuthContext';
 import { formatCount } from '../utils/formatNumbers';
 import { useLanguage } from '../context/LanguageContext';
+import { createScannerInvite } from '../services/scannerService';
+import { buildScannerInviteMessage, buildScannerInviteUrl } from '../utils/shareLinks';
 
 const { width } = Dimensions.get('window');
 const CARD_PAD  = 20;
@@ -218,6 +222,7 @@ const DashboardScreen = ({ navigation }) => {
     guestCheckIn: true, scanTickets: true, refundTickets: false,
     editEvents: false, viewRevenue: false, manageGuestList: true,
   });
+  const [sharingEventId, setSharingEventId] = useState(null);
 
   // RAF animation
   const rafRef     = useRef(null);
@@ -270,6 +275,11 @@ const DashboardScreen = ({ navigation }) => {
   const liveEvents      = useMemo(() => getLiveEvents().filter(e => e.organizer?.id === user?.id || e.organizerId === user?.id), [events]);
   const upcomingEvents  = useMemo(() => getUpcomingEvents().filter(e => e.organizer?.id === user?.id || e.organizerId === user?.id), [events]);
   const pastEvents      = useMemo(() => getPastEvents().filter(e => e.organizer?.id === user?.id || e.organizerId === user?.id), [events]);
+  const scannerInviteEvents = useMemo(() => {
+    const byId = new Map();
+    [...upcomingEvents, ...liveEvents].forEach((e) => byId.set(e.id, e));
+    return [...byId.values()];
+  }, [upcomingEvents, liveEvents]);
   const totalTicketsSold = useMemo(() => myEvents.reduce((s, e) => s + (e.bookedSpots || 0), 0), [myEvents]);
   const totalCapacity    = useMemo(() => myEvents.reduce((s, e) => s + (e.tickets?.reduce((tc, t) => tc + (t.quantity || 0), 0) || 0), 0), [myEvents]);
 
@@ -358,6 +368,31 @@ const DashboardScreen = ({ navigation }) => {
   [myEvents, t]);
 
   const togglePermission = (key) => setPermissions(p => ({ ...p, [key]: !p[key] }));
+
+  const handleShareScannerInvite = async (event) => {
+    if (!event?.id) return;
+    setSharingEventId(event.id);
+    try {
+      const result = await createScannerInvite(event.id);
+      const inviteToken = result?.inviteToken;
+      if (!inviteToken) throw new Error(t('dashboard.permissions.scannerInvite.shareFailed'));
+
+      const message = buildScannerInviteMessage({
+        event,
+        t,
+        inviteToken,
+        includeUrl: Platform.OS !== 'ios',
+      });
+      await Share.share({
+        message,
+        ...(Platform.OS === 'ios' ? { url: buildScannerInviteUrl(inviteToken) } : {}),
+      });
+    } catch (e) {
+      Alert.alert(t('common.error'), e.message || t('dashboard.permissions.scannerInvite.shareFailed'));
+    } finally {
+      setSharingEventId(null);
+    }
+  };
   const chevronRotate = chevronAnim.interpolate({ inputRange: [0, 1], outputRange: ['0deg', '90deg'] });
   const BAR_W = CARD_W - CARD_PAD * 2 - 80;
 
@@ -369,6 +404,7 @@ const DashboardScreen = ({ navigation }) => {
 
   return (
     <View style={styles.container}>
+      <SambaBackground />
       <StatusBar barStyle="light-content" />
 
       {/* Lip */}
@@ -620,7 +656,7 @@ const DashboardScreen = ({ navigation }) => {
               {topReturners.map((g, i) => {
                 const medals = ['🥇', '🥈', '🥉'];
                 const barPct = g.events / topReturners[0].events;
-                const avatarColors = ['#FF4B8C','#a78bfa','#4ade80','#FFD700','#60a5fa','#f97316'];
+                const avatarColors = ['#FF4B8C','#a78bfa','#4ade80','#22c55e','#60a5fa','#f97316'];
                 return (
                   <View key={g.id} style={styles.returnerRow}>
                     <Text style={styles.returnerRank}>{medals[i] ?? `#${i+1}`}</Text>
@@ -718,10 +754,42 @@ const DashboardScreen = ({ navigation }) => {
                 </View>
               ))}
             </View>
-            <TouchableOpacity style={styles.inviteBtn} activeOpacity={0.8}>
-              <Icon name="user-plus" type="feather" size={15} color="#FFFFFF" style={{ marginRight: 8 }} />
-              <Text style={styles.inviteBtnText}>{t('dashboard.permissions.inviteStaff')}</Text>
-            </TouchableOpacity>
+
+            <Text style={styles.scannerInviteHeading}>{t('dashboard.permissions.scannerInvite.title')}</Text>
+            <Text style={styles.scannerInviteIntro}>{t('dashboard.permissions.scannerInvite.intro')}</Text>
+
+            {scannerInviteEvents.length === 0 ? (
+              <View style={styles.card}>
+                <Text style={styles.scannerInviteEmpty}>{t('dashboard.permissions.scannerInvite.noEvents')}</Text>
+              </View>
+            ) : (
+              scannerInviteEvents.map((event) => (
+                <View key={event.id} style={styles.scannerInviteRow}>
+                  <View style={styles.scannerInviteInfo}>
+                    <Text style={styles.scannerInviteEventTitle} numberOfLines={2}>{event.title}</Text>
+                    <Text style={styles.scannerInviteEventMeta}>
+                      {new Date(event.date).toLocaleDateString(undefined, { month: 'short', day: 'numeric' })}
+                      {liveEvents.some((e) => e.id === event.id) ? ` · ${t('manageEvents.filter.live')}` : ''}
+                    </Text>
+                  </View>
+                  <TouchableOpacity
+                    style={styles.scannerShareBtn}
+                    onPress={() => handleShareScannerInvite(event)}
+                    disabled={sharingEventId === event.id}
+                    activeOpacity={0.85}
+                  >
+                    {sharingEventId === event.id ? (
+                      <ActivityIndicator size="small" color="#FFF" />
+                    ) : (
+                      <>
+                        <Icon name="share-2" type="feather" size={15} color="#FFF" />
+                        <Text style={styles.scannerShareBtnText}>{t('dashboard.permissions.scannerInvite.shareLink')}</Text>
+                      </>
+                    )}
+                  </TouchableOpacity>
+                </View>
+              ))
+            )}
           </>
         )}
       </ScrollView>
@@ -735,7 +803,7 @@ const DashboardScreen = ({ navigation }) => {
 const COL = (CARD_W - 12) / 2;
 
 const styles = StyleSheet.create({
-  container: { flex: 1, backgroundColor: '#0a0a0a' },
+  container: { flex: 1, backgroundColor: samba.bgDeep },
 
   lip: {
     backgroundColor: '#1a1a1a',
@@ -860,7 +928,7 @@ const styles = StyleSheet.create({
   returnerNameRow: { flexDirection: 'row', alignItems: 'center', gap: 6, marginBottom: 5 },
   returnerName: { fontSize: 13, fontWeight: '700', color: '#FFFFFF' },
   streakBadge: { backgroundColor: 'rgba(255,140,0,0.15)', borderRadius: 6, paddingHorizontal: 6, paddingVertical: 2 },
-  streakText: { fontSize: 10, fontWeight: '700', color: '#FFA500' },
+  streakText: { fontSize: 10, fontWeight: '700', color: '#4ade80' },
   returnerBarTrack: { height: 4, backgroundColor: 'rgba(255,255,255,0.07)', borderRadius: 2, overflow: 'hidden' },
   returnerBarFill: { height: 4, borderRadius: 2 },
   returnerRight: { alignItems: 'center' },
@@ -902,6 +970,54 @@ const styles = StyleSheet.create({
     borderWidth: 1, borderColor: 'rgba(255,255,255,0.08)',
   },
   inviteBtnText: { fontSize: 14, fontWeight: '700', color: '#FFFFFF' },
+  scannerInviteHeading: {
+    fontSize: 17,
+    fontWeight: '800',
+    color: '#FFFFFF',
+    marginHorizontal: 20,
+    marginTop: 22,
+    marginBottom: 6,
+  },
+  scannerInviteIntro: {
+    fontSize: 13,
+    color: 'rgba(255,255,255,0.5)',
+    lineHeight: 19,
+    marginHorizontal: 20,
+    marginBottom: 12,
+  },
+  scannerInviteEmpty: {
+    fontSize: 14,
+    color: 'rgba(255,255,255,0.45)',
+    textAlign: 'center',
+    paddingVertical: 8,
+  },
+  scannerInviteRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginHorizontal: 20,
+    marginBottom: 10,
+    padding: 14,
+    borderRadius: 16,
+    backgroundColor: 'rgba(255,255,255,0.06)',
+    borderWidth: 1,
+    borderColor: 'rgba(255,255,255,0.08)',
+    gap: 12,
+  },
+  scannerInviteInfo: { flex: 1 },
+  scannerInviteEventTitle: { fontSize: 15, fontWeight: '700', color: '#FFF', marginBottom: 4 },
+  scannerInviteEventMeta: { fontSize: 12, color: 'rgba(255,255,255,0.45)' },
+  scannerShareBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    backgroundColor: samba.green,
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+    borderRadius: 12,
+    minWidth: 100,
+    justifyContent: 'center',
+  },
+  scannerShareBtnText: { fontSize: 12, fontWeight: '700', color: '#FFF' },
 });
 
 export default DashboardScreen;

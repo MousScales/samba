@@ -1,8 +1,12 @@
 import React, { createContext, useState, useContext, useEffect, useRef } from 'react';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 import { authService } from '../services/authService';
 import { supabase } from '../config/supabase';
 import { isLocalImageUri, uploadImage } from '../services/imageService';
 import * as Location from 'expo-location';
+import { getGoogleMapsApiKey } from '../config/env';
+
+const LOCATION_STORAGE_KEY = 'samba_user_location';
 
 const AuthContext = createContext({});
 
@@ -78,18 +82,68 @@ export const AuthProvider = ({ children }) => {
     return () => subscription.unsubscribe();
   }, []);
 
-  // Request location permissions and get user location
+  const saveLocation = async (locationData) => {
+    try {
+      await AsyncStorage.setItem(
+        LOCATION_STORAGE_KEY,
+        JSON.stringify({ ...locationData, updatedAt: new Date().toISOString() }),
+      );
+    } catch (error) {
+      console.warn('Failed to save location:', error?.message || error);
+    }
+  };
+
+  const loadSavedLocation = async () => {
+    try {
+      const raw = await AsyncStorage.getItem(LOCATION_STORAGE_KEY);
+      if (!raw) return null;
+      const parsed = JSON.parse(raw);
+      if (parsed?.latitude != null || parsed?.city) return parsed;
+    } catch (error) {
+      console.warn('Failed to load saved location:', error?.message || error);
+    }
+    return null;
+  };
+
+  const applyLocation = async (locationData) => {
+    setUserLocation(locationData);
+    await saveLocation(locationData);
+    return locationData;
+  };
+
+  const updateUserLocation = async (partial) => {
+    const saved = await loadSavedLocation();
+    const merged = { ...(saved || {}), ...partial };
+    await applyLocation(merged);
+    return { success: true, location: merged };
+  };
+
+  const initializeLocation = async () => {
+    try {
+      const saved = await loadSavedLocation();
+      if (saved) setUserLocation(saved);
+
+      const { status } = await Location.getForegroundPermissionsAsync();
+      setLocationPermission(status === 'granted');
+
+      if (status === 'granted') {
+        await getCurrentLocation();
+      }
+    } catch (error) {
+      console.warn('Location init error:', error?.message || error);
+    }
+  };
+
   const requestLocationPermission = async () => {
     try {
       const { status } = await Location.requestForegroundPermissionsAsync();
       setLocationPermission(status === 'granted');
-      
+
       if (status === 'granted') {
-        await getCurrentLocation();
-        return { success: true, granted: true };
-      } else {
-        return { success: false, granted: false, message: 'Location permission denied' };
+        const result = await getCurrentLocation();
+        return { success: true, granted: true, location: result.location };
       }
+      return { success: false, granted: false, message: 'Location permission denied' };
     } catch (error) {
       console.error('Location permission error:', error);
       return { success: false, granted: false, message: 'Failed to request location permission' };
@@ -98,9 +152,12 @@ export const AuthProvider = ({ children }) => {
 
   const getCurrentLocation = async () => {
     try {
-      if (locationPermission === false) {
+      const { status } = await Location.getForegroundPermissionsAsync();
+      if (status !== 'granted') {
+        setLocationPermission(false);
         return { success: false, message: 'Location permission not granted' };
       }
+      setLocationPermission(true);
 
       const location = await Location.getCurrentPositionAsync({
         accuracy: Location.Accuracy.Balanced,
@@ -108,10 +165,9 @@ export const AuthProvider = ({ children }) => {
 
       const { latitude, longitude } = location.coords;
 
-      // Try Google Geocoding API first
       let city, state, country, postalCode;
       try {
-        const GOOGLE_KEY = process.env.EXPO_PUBLIC_GOOGLE_MAPS_API_KEY;
+        const GOOGLE_KEY = getGoogleMapsApiKey();
         const geoRes = await fetch(
           `https://maps.googleapis.com/maps/api/geocode/json?latlng=${latitude},${longitude}&result_type=locality|administrative_area_level_2&key=${GOOGLE_KEY}`
         );
@@ -126,7 +182,6 @@ export const AuthProvider = ({ children }) => {
         }
       } catch (_) { /* fall through to Nominatim */ }
 
-      // Fallback: OpenStreetMap Nominatim (free, no key needed, one call on startup)
       if (!city) {
         try {
           const nomRes = await fetch(
@@ -142,8 +197,9 @@ export const AuthProvider = ({ children }) => {
         } catch (_) { /* no city available */ }
       }
 
-      const locationData = { latitude, longitude, city, state, country, postalCode };
-      setUserLocation(locationData);
+      const locationData = await applyLocation({
+        latitude, longitude, city, state, country, postalCode, source: 'gps',
+      });
       return { success: true, location: locationData };
     } catch (error) {
       console.error('Get location error:', error);
@@ -159,15 +215,17 @@ export const AuthProvider = ({ children }) => {
       if (restored && userData) {
         setUser(userData);
         setIsAuthenticated(true);
-        await requestLocationPermission();
       } else {
         setUser(null);
         setIsAuthenticated(false);
       }
+
+      await initializeLocation();
     } catch (error) {
       console.error('Auth initialization error:', error);
       setUser(null);
       setIsAuthenticated(false);
+      await initializeLocation();
     } finally {
       setIsLoading(false);
     }
@@ -181,9 +239,7 @@ export const AuthProvider = ({ children }) => {
         setUser(result.user);
         setIsAuthenticated(true);
         
-        // Request location permission after successful login
-        await requestLocationPermission();
-        
+        await getCurrentLocation();
         return { success: true };
       }
       
@@ -353,6 +409,20 @@ export const AuthProvider = ({ children }) => {
     }
   };
 
+  const becomeScanner = async (scannerData) => {
+    try {
+      const result = await authService.becomeScanner(scannerData);
+      if (result.success) {
+        setUser(result.user);
+        return { success: true };
+      }
+      return { success: false, message: result.message };
+    } catch (error) {
+      console.error('Become scanner error:', error);
+      return { success: false, message: 'Failed to become scanner' };
+    }
+  };
+
   const switchMode = async (mode) => {
     try {
       const result = await authService.switchMode(mode);
@@ -395,10 +465,12 @@ export const AuthProvider = ({ children }) => {
     refreshUser,
     initializeAuth,
     becomeProvider,
+    becomeScanner,
     switchMode,
     checkEmail,
     requestLocationPermission,
     getCurrentLocation,
+    updateUserLocation,
   };
 
   return (

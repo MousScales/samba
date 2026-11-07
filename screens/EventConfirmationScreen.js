@@ -7,7 +7,10 @@ import { Text, Icon } from '@rneui/themed';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { LinearGradient } from 'expo-linear-gradient';
 import { StatusBar } from 'expo-status-bar';
+import { buildEventShareMessage, buildEventShareUrl } from '../utils/shareLinks';
+import { syncEventForSharing } from '../services/eventsService';
 import { useLanguage } from '../context/LanguageContext';
+import { useAuth } from '../context/AuthContext';
 
 const { width, height: SCREEN_H } = Dimensions.get('window');
 const HERO_H = Math.round(SCREEN_H * 0.48);
@@ -15,6 +18,7 @@ const HERO_H = Math.round(SCREEN_H * 0.48);
 const EventConfirmationScreen = ({ navigation, route }) => {
   const { eventData } = route.params;
   const { t, locale } = useLanguage();
+  const { user } = useAuth();
   const insets = useSafeAreaInsets();
 
   useLayoutEffect(() => {
@@ -47,10 +51,16 @@ const EventConfirmationScreen = ({ navigation, route }) => {
 
   const handleShare = async () => {
     try {
-      await Share.share({
-        message: `🎉 ${eventData.title}\n📅 ${dateStr} · ${timeStr}\n📍 ${address}\n\nCreated with Samba`,
-        title: eventData.title,
+      await syncEventForSharing(eventData, user?.id);
+      const url = buildEventShareUrl(eventData.id);
+      const message = buildEventShareMessage({
+        event: eventData, t, locale, includeUrl: Platform.OS !== 'ios',
       });
+      await Share.share(
+        Platform.OS === 'ios'
+          ? { message, url, title: eventData.title }
+          : { message, title: eventData.title },
+      );
     } catch {}
   };
 

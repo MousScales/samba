@@ -17,11 +17,12 @@ import { Icon, useTheme } from '@rneui/themed';
 import { useEvents } from '../context/EventsContext';
 import { useAuth } from '../context/AuthContext';
 import { useLanguage } from '../context/LanguageContext';
+import { registerScannerForEvent, addLocalScannerEventId } from '../services/scannerService';
 
 const VerificationCodeScreen = ({ route, navigation }) => {
-  const { event } = route.params || {};
+  const { event, returnTo } = route.params || {};
   const { theme } = useTheme();
-  const { events, registerEventScanner } = useEvents();
+  const { events, registerEventScanner, getEventStatus } = useEvents();
   const { user } = useAuth();
   const { t } = useLanguage();
   const [code, setCode] = useState('');
@@ -66,20 +67,52 @@ const VerificationCodeScreen = ({ route, navigation }) => {
     ]).start();
   }, []);
   
-  const goToScanner = async (targetEvent) => {
+  const goToScanner = async (targetEvent, verificationCode) => {
+    const status = getEventStatus(targetEvent);
+    const isScannerUser = user?.scannerInfo?.status === 'active';
+    const vCode = verificationCode || targetEvent.verificationCode;
+
+    try {
+      if (vCode) {
+        await registerScannerForEvent(vCode);
+      }
+      if (user?.id) await addLocalScannerEventId(user.id, targetEvent.id);
+    } catch {
+      if (user?.id) await addLocalScannerEventId(user.id, targetEvent.id);
+    }
+
+    if (status !== 'live') {
+      Alert.alert(
+        t('scannerEvents.alert.notLive.title'),
+        t('scannerEvents.alert.registered.message'),
+        [{
+          text: t('common.ok'),
+          onPress: () => {
+            if (returnTo === 'ScannerEvents' || isScannerUser) {
+              navigation.replace('ScannerEvents');
+            } else {
+              navigation.goBack();
+            }
+          },
+        }],
+      );
+      return;
+    }
+
     await registerEventScanner(targetEvent.id, {
       id: user?.id,
       name: user?.name || user?.email?.split('@')[0] || 'Scanner',
       email: user?.email,
       profilePicture: user?.profilePicture,
     });
+
     navigation.navigate('TicketScanner', { event: targetEvent });
   };
 
   const handleContinue = () => {
     if (event) {
       if (code === event.verificationCode) {
-        goToScanner(event);
+        goToScanner(event, code);
       } else {
         Alert.alert(
           t('scannerVerification.alert.invalidTitle'),
@@ -91,7 +124,7 @@ const VerificationCodeScreen = ({ route, navigation }) => {
       const matchingEvent = events.find(e => e.verificationCode === code);
       
       if (matchingEvent) {
-        goToScanner(matchingEvent);
+        goToScanner(matchingEvent, code);
       } else {
         Alert.alert(
           t('scannerVerification.alert.invalidTitle'),

@@ -9,13 +9,15 @@ import { LinearGradient } from 'expo-linear-gradient';
 import { useEvents } from '../context/EventsContext';
 import { useAuth } from '../context/AuthContext';
 import { useLanguage } from '../context/LanguageContext';
+import { purchaseTicketsViaSupabase, syncEventForSharing } from '../services/eventsService';
+import { isSupabaseConfigured } from '../config/supabase';
 
 const fmt = (n) => `$${Number(n).toFixed(2)}`;
 
 const CheckoutScreen = ({ navigation, route }) => {
   const insets = useSafeAreaInsets();
-  const { purchaseTickets } = useEvents();
-  const { user } = useAuth();
+  const { saveTicketsFromPurchase } = useEvents();
+  const { user, isAuthenticated } = useAuth();
   const { t, locale } = useLanguage();
   const { tickets, totalTickets, event, ticketTypes } = route.params;
 
@@ -55,15 +57,38 @@ const CheckoutScreen = ({ navigation, route }) => {
     if (!email.trim()) { Alert.alert(t('checkout.alert.missingInfo.title'), t('checkout.error.emailRequired')); return; }
     if (!name.trim())  { Alert.alert(t('checkout.alert.missingInfo.title'), t('checkout.error.nameRequired')); return; }
     if (!agreedToTerms) { Alert.alert(t('checkout.alert.termsRequired.title'), t('checkout.alert.termsRequired.message')); return; }
+    if (!isSupabaseConfigured()) {
+      Alert.alert(
+        t('checkout.alert.purchaseFailed.title'),
+        t('checkout.alert.configMissing'),
+      );
+      return;
+    }
 
     setIsLoading(true);
     const demoPaymentId = `demo_${Date.now()}`;
     try {
-      const purchasedTickets = await purchaseTickets(event, tickets, {
-        name: name.trim(), email: email.trim(),
-        profilePicture: user?.profilePicture || null,
-        paymentId: demoPaymentId, paymentStatus: 'demo_completed', joinGuestList,
+      await syncEventForSharing(event, user?.id);
+
+      const purchaseResult = await purchaseTicketsViaSupabase({
+        eventId: event.id,
+        tickets,
+        buyerName: name.trim(),
+        buyerEmail: email.trim(),
+        joinGuestList,
+        paymentId: demoPaymentId,
+        paymentStatus: 'demo_completed',
+        source: 'app',
       });
+
+      if (isAuthenticated) {
+        await saveTicketsFromPurchase(event, purchaseResult, {
+          name: name.trim(),
+          email: email.trim(),
+          profilePicture: user?.profilePicture || null,
+        });
+      }
+
       navigation.navigate('TicketConfirmation', {
         event: {
           id: event.id, title: event.title,
@@ -73,7 +98,12 @@ const CheckoutScreen = ({ navigation, route }) => {
           coverImage: event.coverImage, flyers: event.flyers, image: event.image,
         },
         tickets, totalAmount: Number(finalTotal),
-        email: email.trim(), purchasedTickets, paymentId: demoPaymentId,
+        email: email.trim(),
+        orderId: purchaseResult.orderId,
+        ticketNumber: purchaseResult.ticketNumber,
+        purchasedTickets: purchaseResult.tickets || [],
+        paymentId: demoPaymentId,
+        isGuest: !isAuthenticated,
       });
     } catch (error) {
       Alert.alert(t('checkout.alert.purchaseFailed.title'), error.message || t('checkout.alert.purchaseFailed.message'));
@@ -119,11 +149,11 @@ const CheckoutScreen = ({ navigation, route }) => {
           </LinearGradient>
         </View>
 
-        {/* ── Demo notice ── */}
+        {/* ── Guest + demo notice ── */}
         <View style={styles.demoCard}>
-          <Icon name="zap" type="feather" size={15} color="#FF4B8C" />
+          <Icon name="mail" type="feather" size={15} color="#FF4B8C" />
           <Text style={styles.demoText}>
-            {t('checkout.demoNotice')}
+            {isAuthenticated ? t('checkout.demoNotice') : t('checkout.guestNotice')}
           </Text>
         </View>
 

@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import React from 'react';
 import { View, ActivityIndicator, StyleSheet } from 'react-native';
 import { NavigationContainer, createNavigationContainerRef } from '@react-navigation/native';
 import { createNativeStackNavigator } from '@react-navigation/native-stack';
@@ -15,6 +15,7 @@ import {
   fadeStackScreenOptions,
   tabStackScreenOptions,
 } from './config/navigation';
+import { linking } from './config/linking';
 import { AuthProvider } from './context/AuthContext';
 import { EventsProvider } from './context/EventsContext';
 import { LanguageProvider, useLanguage } from './context/LanguageContext';
@@ -43,32 +44,24 @@ import LoginScreen from './screens/LoginScreen';
 import RegisterScreen from './screens/RegisterScreen';
 import VerificationCodeScreen from './screens/VerificationCodeScreen';
 import TicketScannerScreen from './screens/TicketScannerScreen';
+import TicketLookupScreen from './screens/TicketLookupScreen';
+import TicketShareClaimScreen from './screens/TicketShareClaimScreen';
 import BecomeProviderScreen from './screens/BecomeProviderScreen';
+import BecomeScannerScreen from './screens/BecomeScannerScreen';
+import ScannerEventsScreen from './screens/ScannerEventsScreen';
+import ScannerInviteClaimScreen from './screens/ScannerInviteClaimScreen';
 import ProviderDashboardScreen from './screens/ProviderDashboardScreen';
 import ManageEventsScreen from './screens/ManageEventsScreen';
 import DashboardScreen from './screens/DashboardScreen';
 import EventStats from './screens/EventStats';
 import LiveEventStats from './screens/LiveEventStats';
+import FaqScreen from './screens/FaqScreen';
 
 const Stack = createNativeStackNavigator();
 const navigationRef = createNavigationContainerRef();
 
-const AuthGate = ({ children }) => {
-  const { isLoading, isAuthenticated } = useAuth();
-  const [navReady, setNavReady] = useState(false);
-
-  useEffect(() => {
-    if (isLoading || !navReady || !navigationRef.isReady()) return;
-
-    const route = isAuthenticated ? 'Profile' : 'Login';
-    const current = navigationRef.getCurrentRoute()?.name;
-    if (current === route) return;
-
-    navigationRef.reset({
-      index: 0,
-      routes: [{ name: route }],
-    });
-  }, [isLoading, isAuthenticated, navReady]);
+const AppShell = ({ children }) => {
+  const { isLoading } = useAuth();
 
   if (isLoading) {
     return (
@@ -79,11 +72,7 @@ const AuthGate = ({ children }) => {
   }
 
   return (
-    <NavigationContainer
-      ref={navigationRef}
-      theme={navigationTheme}
-      onReady={() => setNavReady(true)}
-    >
+    <NavigationContainer ref={navigationRef} theme={navigationTheme} linking={linking}>
       {children}
     </NavigationContainer>
   );
@@ -102,9 +91,9 @@ const AppNavigator = () => {
   const { t } = useLanguage();
 
   return (
-    <AuthGate>
+    <AppShell>
       <Stack.Navigator
-        initialRouteName="Login"
+        initialRouteName="Home"
         screenOptions={defaultStackScreenOptions}
       >
                   <Stack.Screen name="Login" component={LoginScreen} />
@@ -121,6 +110,16 @@ const AppNavigator = () => {
                     options={{
                       headerShown: false,
                     }}
+                  />
+                  <Stack.Screen
+                    name="TicketLookup"
+                    component={TicketLookupScreen}
+                    options={{ headerShown: false }}
+                  />
+                  <Stack.Screen
+                    name="TicketShareClaim"
+                    component={TicketShareClaimScreen}
+                    options={{ headerShown: false }}
                   />
                   <Stack.Screen name="Home" component={HomeScreen} options={tabStackScreenOptions} />
                   <Stack.Screen name="Explore" component={ExploreScreen} options={tabStackScreenOptions} />
@@ -243,6 +242,11 @@ const AppNavigator = () => {
                       headerTintColor: theme.colors.text,
                     }}
                   />
+                  <Stack.Screen
+                    name="Faq"
+                    component={FaqScreen}
+                    options={{ headerShown: false }}
+                  />
                   <Stack.Screen 
                     name="PaymentMethods" 
                     component={PaymentMethodsScreen}
@@ -305,6 +309,21 @@ const AppNavigator = () => {
                     component={BecomeProviderScreen}
                     options={modalStackScreenOptions}
                   />
+                  <Stack.Screen
+                    name="BecomeScanner"
+                    component={BecomeScannerScreen}
+                    options={modalStackScreenOptions}
+                  />
+                  <Stack.Screen
+                    name="ScannerEvents"
+                    component={ScannerEventsScreen}
+                    options={{ headerShown: false }}
+                  />
+                  <Stack.Screen
+                    name="ScannerInviteClaim"
+                    component={ScannerInviteClaimScreen}
+                    options={{ headerShown: false }}
+                  />
                   <Stack.Screen 
                     name="ProviderDashboard" 
                     component={ProviderDashboardScreen}
@@ -313,7 +332,7 @@ const AppNavigator = () => {
                     }}
                   />
       </Stack.Navigator>
-    </AuthGate>
+    </AppShell>
   );
 };
 

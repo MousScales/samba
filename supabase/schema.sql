@@ -117,8 +117,60 @@ create policy "Organizers manage own events"
   using (auth.uid() = organizer_id)
   with check (auth.uid() = organizer_id);
 
+drop policy if exists "Shared events readable for purchase" on public.events;
+create policy "Shared events readable for purchase"
+  on public.events for select
+  using (ticket_sales_open = true);
+
+alter table public.events add column if not exists guest_list jsonb not null default '[]'::jsonb;
+
 grant select on public.events to anon, authenticated;
 grant insert, update, delete on public.events to authenticated;
+
+-- Ticket orders + individual tickets (see supabase/tickets.sql for full setup)
+create table if not exists public.ticket_orders (
+  id text primary key,
+  event_id text not null references public.events (id) on delete cascade,
+  ticket_number text not null,
+  buyer_name text not null,
+  buyer_email text not null,
+  join_guest_list boolean not null default true,
+  subtotal numeric(10, 2) not null default 0,
+  service_fee numeric(10, 2) not null default 0,
+  total numeric(10, 2) not null default 0,
+  payment_id text,
+  payment_status text not null default 'demo_completed',
+  source text not null default 'web',
+  created_at timestamptz not null default now()
+);
+
+create table if not exists public.tickets (
+  id text primary key,
+  order_id text not null references public.ticket_orders (id) on delete cascade,
+  event_id text not null references public.events (id) on delete cascade,
+  ticket_number text not null,
+  ticket_type text not null,
+  ticket_type_id text,
+  price numeric(10, 2) not null default 0,
+  is_free boolean not null default false,
+  buyer_name text not null,
+  buyer_email text not null,
+  qr_code text not null unique,
+  status text not null default 'upcoming',
+  scanned_at timestamptz,
+  scanned_by uuid references public.profiles (id) on delete set null,
+  payment_id text,
+  source text not null default 'web',
+  created_at timestamptz not null default now(),
+  constraint tickets_status_check check (status in ('upcoming', 'used', 'cancelled', 'refunded'))
+);
+
+create index if not exists ticket_orders_event_id_idx on public.ticket_orders (event_id);
+create index if not exists tickets_event_id_idx on public.tickets (event_id);
+create index if not exists tickets_qr_code_idx on public.tickets (qr_code);
+
+alter table public.ticket_orders enable row level security;
+alter table public.tickets enable row level security;
 
 -- Storage buckets for profile photos, event flyers, and provider assets.
 -- Safe to re-run in SQL editor.

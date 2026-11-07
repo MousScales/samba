@@ -2,7 +2,8 @@
   "expo": {
     "name": "Samba",
     "slug": "sambaevents",
-    "version": "1.0.0",
+    "scheme": "samba",
+    "version": "1.0.1",
     "orientation": "portrait",
     "icon": "./assets/icon.png",
     "userInterfaceStyle": "dark",
@@ -17,6 +18,9 @@
     "ios": {
       "supportsTablet": true,
       "bundleIdentifier": "com.sambaevents",
+      "associatedDomains": [
+        "applinks:samba-site-woad.vercel.app"
+      ],
       "config": {
         "googleMapsApiKey": "AIzaSyBac1aYfzeeIRBuk5Ut_cPRsioAePxCkbk"
       },
@@ -41,6 +45,23 @@
       "softwareKeyboardLayoutMode": "resize",
       "edgeToEdgeEnabled": true,
       "package": "com.sambaevents",
+      "intentFilters": [
+        {
+          "action": "VIEW",
+          "autoVerify": true,
+          "data": [
+            {
+              "scheme": "https",
+              "host": "samba-site-woad.vercel.app",
+              "pathPrefix": "/events"
+            }
+          ],
+          "category": [
+            "BROWSABLE",
+            "DEFAULT"
+          ]
+        }
+      ],
       "permissions": [
         "CAMERA",
         "READ_MEDIA_IMAGES",
@@ -59,6 +80,7 @@
       "favicon": "./assets/favicon.png"
     },
     "plugins": [
+      "./plugins/withFmtXcode26Fix",
       "expo-dev-client",
       [
         "expo-image-picker",
